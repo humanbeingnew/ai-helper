@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101827"><meta name="description" content="자료를 찾고, 생각을 다듬고, 더 나은 결과물을 만드는 학생 학습 플랫폼">
+  <title>STUDY HUB PRO</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="#home"><span class="brand-mark">S</span><span>STUDY HUB<small>PRO · LEARNING SPACE</small></span></a>
+    <div class="side-label">WORKSPACE</div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="home"><span>⌂</span> 대시보드</button>
+      <button class="nav-item" data-view="search"><span>⌕</span> 자료 탐색</button>
+      <button class="nav-item" data-view="feedback"><span>✳</span> AI 피드백</button>
+      <button class="nav-item" data-view="history"><span>◷</span> 학습 기록</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="free-card"><span class="live-dot"></span><b>FREE WORKSPACE</b><p>필요한 학습 도구를<br>부담 없이 사용하세요.</p></div><div class="profile"><div class="avatar">S</div><div><b>Student</b><small>My learning space</small></div><span class="profile-menu">···</span></div></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="crumb">Workspace <span>/</span> <b id="crumb-current">Overview</b></div><div class="top-actions"><span class="status"><i></i> 무료 플랜</span><button class="icon-btn" id="help-btn" aria-label="도움말">?</button></div></header>
+    <section class="view active" id="view-home">
+      <div class="welcome-row"><div><div class="eyebrow">YOUR LEARNING, IN ONE PLACE</div><h1>오늘의 학습을 시작해 볼까요?</h1><p class="sub">자료를 발견하고, 생각을 정리하고, 한 단계 더 성장해 보세요.</p></div><div class="date-chip" id="today-date"></div></div>
+      <div class="hero-card"><div class="hero-copy"><div class="hero-tag">✦ STUDY SMARTER</div><h2>좋은 결과물은<br><em>좋은 질문</em>에서 시작돼요.</h2><p>필요한 자료를 찾고 AI 피드백으로 아이디어를 발전시켜 보세요.</p><button class="primary-btn" data-go="search">자료 탐색 시작하기 <span>↗</span></button></div><div class="hero-art"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-core">✳</div><div class="float-card card-a"><span>✦</span> Explore ideas</div><div class="float-card card-b"><span>✓</span> Make progress</div><div class="float-card card-c">AI <b>INSIGHT</b></div></div></div>
+      <div class="section-heading"><div><h3>학습 도구</h3><p>필요한 기능을 선택하세요.</p></div><span class="muted-label">YOUR TOOLKIT</span></div>
+      <div class="tool-grid"><button class="tool-card" data-go="search"><span class="tool-icon purple">⌕</span><span class="tool-title">자료 탐색</span><span class="tool-desc">주제에 맞는 논문과 참고 자료 찾기</span><span class="tool-arrow">↗</span></button><button class="tool-card" data-go="feedback"><span class="tool-icon blue">✳</span><span class="tool-title">AI 피드백</span><span class="tool-desc">글과 과제를 분석하고 개선점 확인</span><span class="tool-arrow">↗</span></button><button class="tool-card" data-go="history"><span class="tool-icon mint">◷</span><span class="tool-title">학습 기록</span><span class="tool-desc">최근 검색과 피드백 다시 살펴보기</span><span class="tool-arrow">↗</span></button></div>
+      <div class="notice"><span>ⓘ</span><p><b>처음 이용하시나요?</b> 자료 탐색은 별도 가입 없이 이용할 수 있어요. AI 피드백은 배포 환경에 Gemini 무료 API 키를 연결하면 활성화됩니다.</p></div>
+    </section>
+    <section class="view" id="view-search">
+      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1>자료 탐색</h1><p class="sub">궁금한 주제를 검색하고 학습에 도움이 되는 자료를 찾아보세요.</p></div>
+      <form id="search-form" class="search-box"><span>⌕</span><input id="search-input" placeholder="예: 인공지능이 교육에 미치는 영향" minlength="2" required><button class="primary-btn" type="submit">검색하기 <span>↗</span></button></form>
+      <div class="search-meta"><span id="search-status">OpenAlex 학술 자료 · Wikipedia 개요를 검색합니다.</span><span>무료 공개 데이터</span></div>
+      <div id="search-results" class="results"><div class="empty-state"><div>⌕</div><h3>어떤 자료를 찾고 있나요?</h3><p>검색어를 입력하면 관련 자료와 원문 링크를 보여드려요.</p></div></div>
+    </section>
+    <section class="view" id="view-feedback">
+      <div class="page-heading"><div class="eyebrow">THINK · REVIEW · IMPROVE</div><h1>AI 피드백</h1><p class="sub">작성한 글이나 과제를 입력하면 강점과 개선 방향을 분석해 드려요.</p></div>
+      <div class="feedback-layout"><form id="feedback-form" class="panel feedback-form"><label>과제 유형<select id="task-type"><option>설명문 / 보고서</option><option>주장하는 글</option><option>탐구 활동</option><option>발표 대본</option><option>일반 글쓰기</option></select></label><label>과제 주제 <input id="task-topic" placeholder="예: 인공지능과 미래 사회"></label><label>내가 작성한 내용 <textarea id="task-content" rows="11" minlength="30" placeholder="작성한 글이나 과제 내용을 여기에 붙여 넣으세요.&#10;&#10;무엇을 잘했는지, 어떤 점을 보완하면 좋을지 구체적으로 알려드릴게요." required></textarea></label><div class="form-foot"><span id="char-count">0자</span><button class="primary-btn" type="submit">피드백 받기 <span>✳</span></button></div></form>
+      <div class="panel feedback-side"><div class="side-icon">✳</div><h3>더 나은 결과물을 위한<br>세 가지 관점</h3><div class="review-point"><b><span>01</span> 내용과 정확성</b><p>주제에 맞는 내용인지, 근거가 충분한지 확인</p></div><div class="review-point"><b><span>02</span> 논리와 구성</b><p>문단의 흐름과 주장 사이의 연결을 점검</p></div><div class="review-point"><b><span>03</span> 표현과 개선</b><p>명확한 표현과 다음 수정 방향 제안</p></div><div class="privacy-note">🔒 입력한 글은 피드백 요청 시에만 분석에 사용됩니다. 기록은 현재 브라우저에 저장됩니다.</div></div></div>
+      <div id="feedback-result" class="feedback-result hidden"></div>
+    </section>
+    <section class="view" id="view-history"><div class="page-heading"><div class="eyebrow">YOUR PROGRESS</div><h1>학습 기록</h1><p class="sub">이 브라우저에서 진행한 최근 활동을 확인할 수 있어요.</p></div><div class="history-head"><h3>최근 활동</h3><button class="text-btn" id="clear-history">기록 지우기</button></div><div id="history-list" class="history-list"></div></section>
+    <footer>STUDY HUB PRO <span>·</span> Learn with curiosity.</footer>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal hidden" id="help-modal"><div class="modal-card"><button class="modal-close" id="modal-close">×</button><div class="eyebrow">QUICK GUIDE</div><h2>STUDY HUB 사용 안내</h2><p>자료 탐색은 OpenAlex와 Wikipedia의 공개 데이터를 활용합니다. AI 피드백은 Cloudflare Pages 환경 변수에 Gemini API 키를 등록하면 실제 AI 분석으로 작동합니다.</p><p>API 키가 연결되지 않은 경우에는 기본 점검표가 제공되며, 이 결과는 생성형 AI 분석이 아닙니다.</p><a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noreferrer">Gemini 무료 사용 조건 확인 ↗</a></div></div>
+<script src="/app.js" defer></script>
+</body></html>
