@@ -56,14 +56,16 @@ async function searchMaterials(query) {
     return json({ error: "검색어를 2자 이상 입력해 주세요." }, 400);
   }
 
-  // OpenAlex의 select 파라미터에 의존하지 않고 기본 응답을 받아
-  // API 스키마가 조금 바뀌어도 검색이 깨지지 않도록 합니다.
+  // 최신 학술자료를 우선: publication_date 내림차순으로 정렬합니다.
   const openAlexUrl =
     `https://api.openalex.org/works?search=${encodeURIComponent(q)}` +
-    `&per-page=8`;
+    `&per-page=10&sort=publication_date:desc`;
+
+  // Wikipedia는 최신 생성 문서를 우선하고, 검색 결과 자체의 썸네일을 함께 요청합니다.
   const wikiUrl =
     `https://ko.wikipedia.org/w/api.php?action=query&list=search` +
-    `&srsearch=${encodeURIComponent(q)}&srlimit=5&format=json`;
+    `&srsearch=${encodeURIComponent(q)}&srlimit=6&srnamespace=0` +
+    `&srsort=create_timestamp_desc&srprop=timestamp|snippet&format=json`;
 
   const [openAlex, wikipedia] = await Promise.allSettled([
     fetchJson(openAlexUrl),
@@ -74,9 +76,11 @@ async function searchMaterials(query) {
   const providers = [];
   const errors = {};
 
+  let openAlexWorks = [];
   if (openAlex.status === "fulfilled") {
     providers.push("OpenAlex");
-    for (const work of openAlex.value.results || []) {
+    openAlexWorks = openAlex.value.results || [];
+    for (const work of openAlexWorks) {
       const title = clean(work.display_name);
       if (!title) continue;
 
@@ -87,42 +91,104 @@ async function searchMaterials(query) {
         .join(", ");
 
       results.push({
-        source: "OPENALEX · 학술 자료",
+        source: "OPENALEX · 최신 학술 자료",
         title,
         year: work.publication_year || "",
+        publishedAt: work.publication_date || "",
         description: authors
           ? `저자: ${authors}${work.doi ? " · DOI 자료" : ""}`
           : "공개 학술 메타데이터",
         url:
           work.primary_location?.landing_page_url ||
           (work.doi ? work.doi : "") ||
-          work.id
+          work.id,
+        image: ""
       });
     }
   } else {
     errors.OpenAlex = openAlex.reason?.message || "연결 실패";
   }
 
+  let wikiPages = [];
   if (wikipedia.status === "fulfilled") {
     providers.push("Wikipedia");
-    for (const page of wikipedia.value.query?.search || []) {
+    wikiPages = wikipedia.value.query?.search || [];
+    for (const page of wikiPages) {
       results.push({
-        source: "WIKIPEDIA · 개요",
+        source: "WIKIPEDIA · 최근 문서",
         title: clean(page.title),
-        year: "",
+        year: page.timestamp ? new Date(page.timestamp).getFullYear() : "",
+        publishedAt: page.timestamp || "",
         description: clean(page.snippet || ""),
         url: `https://ko.wikipedia.org/wiki/${encodeURIComponent(
           page.title.replace(/ /g, "_")
-        )}`
+        )}`,
+        image: ""
       });
     }
   } else {
     errors.Wikipedia = wikipedia.reason?.message || "연결 실패";
   }
 
-  // 두 제공처 중 하나만 살아 있어도 검색은 정상 응답합니다.
-  // 기존 코드는 둘 다 실패했을 때만 502를 반환했지만,
-  // 외부 API 하나의 일시 장애 때문에 전체 기능이 죽는 문제가 있었습니다.
+  // 이미지 조회는 서로 독립적이므로 병렬 처리해 검색 지연을 줄입니다.
+  const openAlexImageTask = openAlexWorks.length
+    ? (async () => {
+        const titles = openAlexWorks
+          .map(work => clean(work.display_name))
+          .filter(Boolean)
+          .slice(0, 10);
+        const imageUrl =
+          `https://ko.wikipedia.org/w/api.php?action=query&format=json&redirects=1` +
+          `&prop=pageimages&piprop=thumbnail&pithumbsize=520&pilicense=free` +
+          `&titles=${encodeURIComponent(titles.join("|"))}`;
+        const imageData = await fetchJson(imageUrl, 7000);
+        const pages = Object.values(imageData.query?.pages || {});
+        return new Map(
+          pages
+            .filter(page => page.title && page.thumbnail?.source)
+            .map(page => [normalizeTitle(page.title), page.thumbnail.source])
+        );
+      })()
+    : Promise.resolve(new Map());
+
+  const wikiImageTask = wikiPages.length
+    ? (async () => {
+        const titles = wikiPages.map(page => page.title).filter(Boolean).slice(0, 6);
+        const imageUrl =
+          `https://ko.wikipedia.org/w/api.php?action=query&format=json&redirects=1` +
+          `&prop=pageimages&piprop=thumbnail&pithumbsize=520&pilicense=free` +
+          `&titles=${encodeURIComponent(titles.join("|"))}`;
+        const imageData = await fetchJson(imageUrl, 7000);
+        const pages = Object.values(imageData.query?.pages || {});
+        return new Map(
+          pages
+            .filter(page => page.title && page.thumbnail?.source)
+            .map(page => [normalizeTitle(page.title), page.thumbnail.source])
+        );
+      })()
+    : Promise.resolve(new Map());
+
+  const [openAlexImages, wikiImages] = await Promise.allSettled([
+    openAlexImageTask,
+    wikiImageTask
+  ]);
+
+  if (openAlexImages.status === "fulfilled") {
+    for (const result of results) {
+      if (result.source.startsWith("OPENALEX")) {
+        result.image = openAlexImages.value.get(normalizeTitle(result.title)) || "";
+      }
+    }
+  }
+
+  if (wikiImages.status === "fulfilled") {
+    for (const result of results) {
+      if (result.source.startsWith("WIKIPEDIA")) {
+        result.image = wikiImages.value.get(normalizeTitle(result.title)) || "";
+      }
+    }
+  }
+
   if (!providers.length) {
     return json({
       error: "외부 자료 제공처에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.",
@@ -131,17 +197,33 @@ async function searchMaterials(query) {
     }, 502);
   }
 
+  // 최신 학술자료를 먼저 보여주고, 그 다음 최근 Wikipedia 문서를 보여줍니다.
+  results.sort((a, b) => {
+    const academicA = a.source.startsWith("OPENALEX") ? 0 : 1;
+    const academicB = b.source.startsWith("OPENALEX") ? 0 : 1;
+    if (academicA !== academicB) return academicA - academicB;
+    const ad = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+    const bd = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+    return bd - ad;
+  });
+
   return json({
     query: q,
     providers,
     results: results.slice(0, 12),
     notice: results.length
-      ? ""
+      ? "최신 공개 자료를 우선으로 정렬했습니다."
       : "연결은 성공했지만 검색 결과가 없어요. 다른 검색어를 입력해 보세요.",
-    ...(Object.keys(errors).length
-      ? { providerWarnings: errors }
-      : {})
+    ...(Object.keys(errors).length ? { providerWarnings: errors } : {})
   }, 200, { "Cache-Control": "public, max-age=120" });
+}
+
+function normalizeTitle(value = "") {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[“”‘’'"`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export default {

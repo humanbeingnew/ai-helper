@@ -30,9 +30,9 @@
       <div class="notice"><span>ⓘ</span><p><b>처음 이용하시나요?</b> 자료 탐색과 학습 피드백은 별도 가입이나 API 키 없이 무료로 이용할 수 있어요. 피드백은 브라우저에서 작동하는 규칙 기반 자동 점검입니다.</p></div>
     </section>
     <section class="view" id="view-search">
-      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1>자료 탐색</h1><p class="sub">궁금한 주제를 검색하고 학습에 도움이 되는 자료를 찾아보세요.</p></div>
+      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1>자료 탐색</h1><p class="sub">궁금한 주제를 검색하고 최신 공개 학술자료와 관련 문서의 대표 이미지를 함께 확인해 보세요.</p></div>
       <form id="search-form" class="search-box"><span>⌕</span><input id="search-input" placeholder="예: 인공지능이 교육에 미치는 영향" minlength="2" required><button class="primary-btn" type="submit">검색하기 <span>↗</span></button></form>
-      <div class="search-meta"><span id="search-status">OpenAlex 학술 자료 · Wikipedia 개요를 검색합니다.</span><span>무료 공개 데이터</span></div>
+      <div class="search-meta"><span id="search-status">최신 학술자료를 우선으로 검색합니다.</span><span>무료 공개 데이터 · 최신순</span></div>
       <div id="search-results" class="results"><div class="empty-state"><div>⌕</div><h3>어떤 자료를 찾고 있나요?</h3><p>검색어를 입력하면 관련 자료와 원문 링크를 보여드려요.</p></div></div>
     </section>
     <section class="view" id="view-feedback">
@@ -46,6 +46,6 @@
   </main>
 </div>
 <div class="toast" id="toast"></div>
-<div class="modal hidden" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title"><div class="modal-card"><button class="modal-close" id="modal-close">×</button><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">STUDY HUB 사용 안내</h2><p>자료 탐색은 OpenAlex와 Wikipedia의 공개 데이터를 활용합니다. 학습 피드백은 외부 AI API 없이 브라우저에서 작동하는 규칙 기반 자동 점검입니다.</p><p>사실 여부를 외부 자료와 대조해 확정하는 기능은 아닙니다. 의심되는 주장과 출처 확인이 필요한 부분을 표시합니다.</p><p>피드백은 사실 검증이 아닌 글의 구조와 표현을 점검하는 참고 도구입니다.</p></div></div>
+<div class="modal hidden" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title"><div class="modal-card"><button class="modal-close" id="modal-close">×</button><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">STUDY HUB 사용 안내</h2><p>자료 탐색은 OpenAlex와 Wikipedia의 공개 데이터를 활용하며, 최신 학술자료를 우선으로 정렬하고 가능한 경우 대표 이미지를 함께 보여줍니다. 학습 피드백은 외부 AI API 없이 브라우저에서 작동하는 규칙 기반 자동 점검입니다.</p><p>사실 여부를 외부 자료와 대조해 확정하는 기능은 아닙니다. 의심되는 주장과 출처 확인이 필요한 부분을 표시합니다.</p><p>피드백은 사실 검증이 아닌 글의 구조와 표현을 점검하는 참고 도구입니다.</p></div></div>
 <script src="/app.js" defer></script>
 </body></html>
