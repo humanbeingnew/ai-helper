@@ -49,7 +49,11 @@ function normalizeTitle(value = "") {
 }
 
 function queryTokens(query = "") {
-  return [...new Set(normalizeTitle(query).split(/[^0-9a-z가-힣]+/i).filter(t => t.length >= 2))];
+  const raw = normalizeTitle(query).split(/[^0-9a-z가-힣]+/i).filter(t => t.length >= 2);
+  // 한국어 조사·어미 때문에 "인공지능이"와 "인공지능"이 불일치하는 문제를 줄입니다.
+  const particles = /(으로부터|에게서|에서는|으로는|이라도|까지는|부터는|에게|에서|으로|이라|이랑|하고|보다|처럼|까지|부터|의|은|는|이|가|을|를|에|와|과|로)$/;
+  const normalized = raw.map(t => t.replace(particles, "")).filter(t => t.length >= 2);
+  return [...new Set([...raw, ...normalized])];
 }
 
 function relevanceScore(query, title = "", description = "") {
@@ -122,11 +126,25 @@ function parseRssItems(xml = "") {
   }).filter(x => x.title && x.url);
 }
 
-async function fetchGoogleNewsRss(query, site, days = 30) {
-  const q = `${query} site:${site} when:${days}d`;
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
-  const xml = await fetchText(url, 9000, { Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8" });
-  return parseRssItems(xml);
+async function fetchGoogleNewsRss(query, site, days = 90) {
+  // Google News RSS의 site 필터가 빈 결과를 반환할 때를 대비해 검색어 기반 RSS로 재시도합니다.
+  const queries = [
+    `${query} site:${site} when:${days}d`,
+    `${query} site:${site}`,
+    `${query} when:${days}d`
+  ];
+  const headers = { Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8" };
+  let lastError;
+  for (const q of queries) {
+    try {
+      const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
+      const xml = await fetchText(url, 9000, headers);
+      const items = parseRssItems(xml);
+      if (items.length) return items;
+    } catch (error) { lastError = error; }
+  }
+  if (lastError) throw lastError;
+  return [];
 }
 
 async function searchMaterials(query, env) {
@@ -144,7 +162,7 @@ async function searchMaterials(query, env) {
   const openAlexRecentUrl = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&filter=from_publication_date:${academicDate}&per-page=20&sort=publication_date:desc`;
   const openAlexRelevantUrl = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&per-page=20&sort=relevance_score:desc`;
   const wikiUrl = `https://ko.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=5&srnamespace=0&srprop=snippet|timestamp&format=json`;
-  const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:30d`)}&hl=ko&gl=KR&ceid=KR:ko`;
+  const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:90d`)}&hl=ko&gl=KR&ceid=KR:ko`;
 
   // 네이버 검색 API 키 없이 Google News RSS에서 네이버 도메인 결과를 별도 수집합니다.
   const tasks = [
@@ -152,8 +170,8 @@ async function searchMaterials(query, env) {
     fetchJson(openAlexRelevantUrl),
     fetchJson(wikiUrl),
     fetchText(googleNewsUrl),
-    fetchGoogleNewsRss(q, "news.naver.com", 30),
-    fetchGoogleNewsRss(q, "blog.naver.com", 90)
+    fetchGoogleNewsRss(q, "news.naver.com", 90),
+    fetchGoogleNewsRss(q, "blog.naver.com", 180)
   ];
   const [openAlexRecent, openAlexRelevant, wikipedia, googleNews, naverNewsRss, naverBlogRss] = await Promise.allSettled(tasks);
 
@@ -222,7 +240,7 @@ async function searchMaterials(query, env) {
         image: item.image || ""
       };
       result.rank = rankResult(q, result);
-      if (relevanceScore(q, result.title, result.description) >= 10 && daysAgo(result.publishedAt) <= 30) results.push(result);
+      if (relevanceScore(q, result.title, result.description) >= 8 && (!result.publishedAt || daysAgo(result.publishedAt) <= 90)) results.push(result);
     });
   } else errors.GoogleNews = googleNews.reason?.message || "연결 실패";
 
@@ -244,7 +262,7 @@ async function searchMaterials(query, env) {
         image: item.image || ""
       };
       result.rank = rankResult(q, result) + rankPenalty;
-      if (relevanceScore(q, result.title, result.description) >= 10 && daysAgo(result.publishedAt) <= maxAgeDays) results.push(result);
+      if (relevanceScore(q, result.title, result.description) >= 8 && (!result.publishedAt || daysAgo(result.publishedAt) <= maxAgeDays)) results.push(result);
     }
   };
   addRssResults(naverNewsRss, "Naver News RSS", "news", 30, 5);
@@ -261,7 +279,7 @@ async function searchMaterials(query, env) {
   }
 
   let ranked = [...deduped.values()]
-    .filter(item => relevanceScore(q, item.title, item.description) >= 10)
+    .filter(item => relevanceScore(q, item.title, item.description) >= 8)
     .sort((a, b) => b.rank - a.rank);
 
   // 최근성은 강하게 반영하되, 관련성이 높은 오래된 학술자료가 전부 사라지지 않도록 상한을 둡니다.
@@ -299,7 +317,7 @@ async function searchMaterials(query, env) {
     providers,
     results: finalResults,
     notice: hasNaver
-      ? `검색어 관련도 필터 · 최근 30일 뉴스 / 90일 블로그 RSS 우선 · 네이버 검색 API 키 불필요`
+      ? `검색어 관련도 필터 · 최근 90일 뉴스 / 180일 블로그 RSS 우선 · 네이버 검색 API 키 불필요`
       : `검색어 관련도 필터 · 최신 RSS 우선 · 네이버 도메인 RSS는 색인된 공개 결과만 표시됩니다.`,
     recentCount,
     naverRssEnabled: true,
