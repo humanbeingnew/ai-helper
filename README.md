@@ -1,43 +1,44 @@
-# STUDY HUB PRO · Cloudflare Workers 버전
+# STUDY HUB PRO · RSS 검색 버전
 
 학생을 위한 무료 학습 자료 탐색 및 자동 피드백 웹앱입니다.
 
-## 최종 점검본
+## 이번 변경: 네이버 API 키 없이 RSS로 뉴스/블로그 검색
 
-이번 버전은 기존 기능을 유지하면서 다음 문제를 추가로 보완했습니다.
+- 네이버 Client ID / Client Secret을 더 이상 사용하지 않습니다.
+- Google News RSS 검색에서 `site:news.naver.com` 결과를 별도 수집해 네이버 뉴스 영역으로 표시합니다.
+- `site:blog.naver.com` 결과를 별도 수집해 네이버 블로그/칼럼 영역으로 표시합니다.
+- 일반 Google News RSS도 함께 검색합니다.
+- RSS 피드는 검색어와 날짜 조건을 포함하며, 뉴스는 최근 30일, 블로그/칼럼은 최근 90일 결과만 후보로 사용합니다.
+- RSS 제공처가 실패해도 OpenAlex/Wikipedia/다른 RSS 결과는 가능한 범위에서 표시합니다.
 
-- `/api/search`를 Cloudflare Worker에서 직접 처리
-- OpenAlex + 한국어 Wikipedia + Google News RSS를 병렬 검색
-- 한 제공처가 실패해도 다른 제공처가 성공하면 결과 표시
-- 외부 API별 10초 서버 타임아웃
-- 검색어 2자 미만 입력을 서버/클라이언트에서 차단
-- OpenAlex의 `select` 파라미터 의존 제거
-- 외부 API 요청에 User-Agent 추가
-- `/api/health` 상태 확인 엔드포인트 추가
-- 검색 화면의 JSON/HTTP 오류 처리 강화
-- 브라우저 검색 요청에도 16초 타임아웃 추가
-- 검색 중 중복 요청을 취소해 오래된 결과가 새 결과를 덮어쓰는 문제 방지
-- 학습 기록 `localStorage`가 손상되거나 저장 한도를 초과해도 검색/피드백 자체는 실패하지 않도록 수정
-- 주제 일치 분석의 영문 대소문자 처리 보완
-- 로고 클릭 시 대시보드로 이동
-- URL hash(`#home`, `#search`, `#feedback`, `#history`)로 화면 이동 지원
-- 도움말 모달의 Esc 닫기 및 기본 접근성 속성 보완
-- 검색 결과/피드백 기록은 최대 40개만 로컬 저장
+### RSS 방식의 중요한 한계
 
-## 무료 운영 구조
+Google News RSS는 Google이 공개한 검색 API가 아니라 RSS 피드 형식으로 널리 사용되는 기능이며, 공식 SLA가 없습니다. 검색 결과는 Google News가 색인한 콘텐츠에 한정되므로 네이버 검색창의 전체 결과와 동일하지 않습니다. 네이버 블로그/칼럼도 Google News에 색인된 공개 게시물만 잡힐 수 있으며, 모든 블로그 글이 보장되지는 않습니다. 피드 구조나 접근 정책이 바뀌면 수집이 중단될 수 있습니다.
 
-현재 애플리케이션은 별도의 유료 AI API 키를 요구하지 않습니다.
+네이버 블로그 자체 RSS는 보통 개별 블로그의 피드 주소를 구독하는 방식이므로 임의의 검색어 전체를 검색하는 피드로 취급하지 않습니다. 네이버도 RSS를 최신 글을 담는 XML 피드로 설명합니다.
 
-- 자료 검색: OpenAlex 공개 API + 한국어 Wikipedia API + Google News 공개 RSS
-- 학습 피드백: 브라우저에서 실행되는 규칙 기반 분석
-- 학습 기록: 사용자 브라우저의 `localStorage`
-- 서버: Cloudflare Workers 무료 플랜 범위에서 운영 가능
+## 검색 품질 및 최신성
 
-단, Cloudflare와 외부 공개 API에는 각각 서비스별 사용량/정책 한도가 있으므로 대규모 트래픽까지 무제한 무료라는 의미는 아닙니다.
+- 제목과 설명에 검색어 핵심 단어가 포함되는지 점수화합니다.
+- 관련도가 낮은 결과를 제외하고 같은 제목은 중복 제거합니다.
+- 뉴스/네이버 뉴스는 최근 30일, 네이버 블로그/칼럼은 최근 90일을 우선 필터링합니다.
+- OpenAlex는 최근 3년 학술자료와 관련도 검색을 함께 가져와 재정렬합니다.
+- Wikipedia는 최신 자료가 아니라 배경 자료로 표시하며 마지막 수정일을 발행일처럼 표시하지 않습니다.
 
-## GitHub 업로드
+## 무료 운영
 
-압축을 풀고 폴더 안의 파일과 폴더를 GitHub 저장소 최상단에 업로드하세요.
+검색 경로에는 네이버 API 키, 유료 검색 API, OpenAI API 키가 필요하지 않습니다. Cloudflare Workers 무료 플랜의 사용량 한도와 외부 RSS 제공처의 정책/가용성은 별도로 적용됩니다.
+
+## 확인
+
+```text
+https://YOUR-WORKER.workers.dev/api/health
+https://YOUR-WORKER.workers.dev/api/search?q=인공지능%20교육
+```
+
+`/api/health`에서 `naverRssEnabled: true`, `naverApiKeyRequired: false`를 확인할 수 있습니다. 검색 응답의 `providers`에는 성공한 RSS 제공처가 표시됩니다.
+
+## 프로젝트 구조
 
 ```text
 public/
@@ -51,67 +52,15 @@ wrangler.toml
 README.md
 ```
 
-기존 `functions/` 폴더는 더 이상 필요하지 않습니다.
-
-## Cloudflare Workers 배포
-
-1. Cloudflare 대시보드에서 **Workers & Pages**로 이동합니다.
-2. **Create application** 또는 **Create**를 누릅니다.
-3. **Workers**에서 GitHub 저장소 연결(Connect to Git)을 선택합니다.
-4. 이 저장소를 선택합니다.
-5. 프로젝트 설정에서 `wrangler.toml`이 읽히도록 Root directory를 `/`로 둡니다.
-6. Git 연동 화면에서 요구하는 Build/Deploy 설정에 맞춰 배포합니다. CLI를 사용하는 경우 아래 명령으로 배포할 수 있습니다.
+## 배포
 
 ```bash
 npm install
 npm run deploy
 ```
 
-Cloudflare가 별도 Build command를 요구하는 경우 프로젝트의 실제 배포 방식에 맞춰 `npm install`을 사용하고, Deploy 단계에서는 `npm run deploy`를 실행하세요.
-
-## 배포 후 확인
-
-Worker 주소가 `https://YOUR-WORKER.workers.dev`라면 먼저:
-
-```text
-https://YOUR-WORKER.workers.dev/api/health
-```
-
-를 열어 `ok: true`가 반환되는지 확인하세요.
-
-그 다음:
-
-```text
-https://YOUR-WORKER.workers.dev/api/search?q=해킹
-```
-
-를 열어 `providers`와 `results`가 포함된 JSON이 나오는지 확인하세요.
-
-## 기능 안내
-
-### 자료 탐색
-
-Worker가 OpenAlex, 한국어 Wikipedia, Google News RSS를 병렬 호출합니다. 뉴스는 최신순으로, 학술자료는 최근 3년 자료를 우선한 뒤 날짜순으로, Wikipedia는 배경 자료로 분리해 보여줍니다. 한 제공처가 실패해도 다른 제공처의 결과가 있으면 검색 결과를 표시합니다.
-
-### 학습 피드백
-
-과제 글은 서버의 검색 API로 전송하지 않고 브라우저 안에서 규칙 기반으로 분석합니다. 생성형 AI가 아니며, 사실 여부를 원문과 대조해 확정하지 않습니다.
-
-### 학습 기록
-
-검색어와 피드백 활동명은 현재 브라우저의 `localStorage`에 최대 40개까지 저장됩니다. 서버 DB에는 저장하지 않습니다.
+Cloudflare 대시보드에서 GitHub 저장소를 연결하는 경우 프로젝트 루트에 `wrangler.toml`이 있도록 설정합니다.
 
 ## 개인정보
 
-피드백 입력 내용은 브라우저 안에서 분석됩니다. 검색어는 자료 검색을 위해 Worker와 공개 자료 제공처로 전달됩니다. 학습 기록은 현재 브라우저의 `localStorage`에 저장됩니다.
-
-
-## 검색 기능 2.3
-- Google News RSS를 추가해 현재 시점의 최신 뉴스/웹 자료를 우선 표시합니다.
-- OpenAlex는 최근 3년 학술자료를 먼저 수집하고 관련도 검색 결과를 보완 자료로 합칩니다. OpenAlex는 publication_date 정렬과 날짜 필터를 무료 API에서 지원합니다.
-- Wikipedia는 생성일 기준 최신 문서를 검색하되, 오래된 문서의 마지막 수정 연도를 '발행 연도'처럼 표시하지 않도록 배경 자료로 분리했습니다.
-- 가능한 경우 한국어 Wikipedia와 RSS의 대표 이미지를 카드에 표시합니다.
-- 검색 결과 카드에는 실제 날짜를 표시해 '2026' 같은 오해를 줄였습니다.
-- 뉴스/학술자료가 먼저 나오고 Wikipedia는 후순위 참고자료로 배치됩니다.
-- 검색 캐시는 60초로 줄여 최신성을 높였습니다.
-- 별도의 유료 검색 API 키는 필요하지 않습니다.
+학습 피드백 입력 내용은 서버 검색 API로 보내지 않고 브라우저 안에서 분석합니다. 검색어는 검색을 위해 Worker와 외부 자료 제공처로 전달됩니다. 검색 기록과 피드백 활동명은 현재 브라우저의 localStorage에 저장됩니다.
