@@ -7,7 +7,7 @@
 이번 버전은 기존 기능을 유지하면서 다음 문제를 추가로 보완했습니다.
 
 - `/api/search`를 Cloudflare Worker에서 직접 처리
-- OpenAlex + 한국어 Wikipedia를 병렬 검색
+- OpenAlex + 한국어 Wikipedia + Google News RSS를 병렬 검색
 - 한 제공처가 실패해도 다른 제공처가 성공하면 결과 표시
 - 외부 API별 10초 서버 타임아웃
 - 검색어 2자 미만 입력을 서버/클라이언트에서 차단
@@ -28,7 +28,7 @@
 
 현재 애플리케이션은 별도의 유료 AI API 키를 요구하지 않습니다.
 
-- 자료 검색: OpenAlex 공개 API + 한국어 Wikipedia API
+- 자료 검색: OpenAlex 공개 API + 한국어 Wikipedia API + Google News 공개 RSS
 - 학습 피드백: 브라우저에서 실행되는 규칙 기반 분석
 - 학습 기록: 사용자 브라우저의 `localStorage`
 - 서버: Cloudflare Workers 무료 플랜 범위에서 운영 가능
@@ -91,7 +91,7 @@ https://YOUR-WORKER.workers.dev/api/search?q=해킹
 
 ### 자료 탐색
 
-Worker가 OpenAlex와 한국어 Wikipedia의 공개 API를 병렬 호출합니다. 한쪽만 일시적으로 실패해도 다른 쪽 결과가 있으면 검색 결과를 표시합니다.
+Worker가 OpenAlex, 한국어 Wikipedia, Google News RSS를 병렬 호출합니다. 뉴스는 최신순으로, 학술자료는 최근 3년 자료를 우선한 뒤 날짜순으로, Wikipedia는 배경 자료로 분리해 보여줍니다. 한 제공처가 실패해도 다른 제공처의 결과가 있으면 검색 결과를 표시합니다.
 
 ### 학습 피드백
 
@@ -106,9 +106,12 @@ Worker가 OpenAlex와 한국어 Wikipedia의 공개 API를 병렬 호출합니�
 피드백 입력 내용은 브라우저 안에서 분석됩니다. 검색어는 자료 검색을 위해 Worker와 공개 자료 제공처로 전달됩니다. 학습 기록은 현재 브라우저의 `localStorage`에 저장됩니다.
 
 
-## 검색 기능 2.2
-- OpenAlex 학술 자료를 `publication_date` 최신순으로 우선 검색합니다.
-- Wikipedia 관련 문서는 최근 생성 문서를 우선 검색합니다.
-- 가능한 경우 한국어 Wikipedia의 무료 대표 이미지를 검색 결과 카드에 표시합니다.
-- 이미지 API가 실패해도 검색 결과 자체는 정상 표시됩니다.
-- 별도의 유료 API 키가 필요하지 않습니다.
+## 검색 기능 2.3
+- Google News RSS를 추가해 현재 시점의 최신 뉴스/웹 자료를 우선 표시합니다.
+- OpenAlex는 최근 3년 학술자료를 먼저 수집하고 관련도 검색 결과를 보완 자료로 합칩니다. OpenAlex는 publication_date 정렬과 날짜 필터를 무료 API에서 지원합니다.
+- Wikipedia는 생성일 기준 최신 문서를 검색하되, 오래된 문서의 마지막 수정 연도를 '발행 연도'처럼 표시하지 않도록 배경 자료로 분리했습니다.
+- 가능한 경우 한국어 Wikipedia와 RSS의 대표 이미지를 카드에 표시합니다.
+- 검색 결과 카드에는 실제 날짜를 표시해 '2026' 같은 오해를 줄였습니다.
+- 뉴스/학술자료가 먼저 나오고 Wikipedia는 후순위 참고자료로 배치됩니다.
+- 검색 캐시는 60초로 줄여 최신성을 높였습니다.
+- 별도의 유료 검색 API 키는 필요하지 않습니다.
