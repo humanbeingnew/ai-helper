@@ -179,11 +179,13 @@ function parseFeed(xml = "") {
     const linkTag = block.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*>/i);
     const rawLink = xmlTag(block, "link") || (linkTag ? clean(linkTag[1]) : "");
     const enclosure = xmlAttr(block, "enclosure", "url") || xmlAttr(block, "media:content", "url") || xmlAttr(block, "media:thumbnail", "url");
-    const source = xmlTag(block, "source") || xmlTag(block, "News:Source") || xmlTag(block, "dc:creator");
+    const sourceMatch = block.match(/<source\b[^>]*\burl=["']([^"']+)["'][^>]*>([\s\S]*?)<\/source>/i);
+    const source = sourceMatch ? clean(sourceMatch[2]) : (xmlTag(block, "News:Source") || xmlTag(block, "dc:creator"));
+    const sourceUrl = sourceMatch ? clean(sourceMatch[1]) : "";
     const title = xmlTag(block, "title");
     const description = xmlTag(block, "description") || xmlTag(block, "summary") || xmlTag(block, "content");
     const publishedAt = parseDate(xmlTag(block, "pubDate") || xmlTag(block, "published") || xmlTag(block, "updated") || xmlTag(block, "dc:date"));
-    if (title && rawLink) items.push({ title, description, url: rawLink, publishedAt, source, image: enclosure });
+    if (title && rawLink) items.push({ title, description, url: rawLink, publishedAt, source, sourceUrl, image: enclosure });
   }
   return items;
 }
@@ -251,6 +253,7 @@ async function wikipedia(query) {
 function toNewsItems(items, type = "news", label = "NEWS") {
   return items.map(item => ({
     source: item.source ? `${label} · ${item.source}` : label,
+    sourceUrl: item.sourceUrl || "",
     type,
     title: item.title,
     description: item.description || "",
@@ -303,7 +306,7 @@ function selectBalanced(items, max = 15) {
   }
   for (const arr of buckets.values()) arr.sort((a, b) => b.rank - a.rank);
 
-  const priority = ["naver-news", "news", "column", "academic", "reference"];
+  const priority = ["naver-news", "news", "column", "academic"];
   const output = [];
   // 먼저 각 유형에서 최소 1개씩 가져와 한 제공처가 화면을 독점하지 못하게 합니다.
   for (const type of priority) {
@@ -324,7 +327,11 @@ function buildSourceResult(query, raw, type, label, maxAge, allowUndated = false
       const rel = relevance(query, x.title, x.description);
       const age = ageDays(x.publishedAt);
       const fresh = Number.isFinite(age) ? age <= maxAge : (allowUndated && rel >= 105);
-      return rel >= 55 && fresh;
+      const tokens = queryTokens(query);
+      const titleNorm = normalizeText(x.title);
+      const titleHit = tokens.some(t => titleNorm.includes(t));
+      const minRel = tokens.length <= 1 ? 36 : 44;
+      return rel >= minRel && fresh && (tokens.length <= 1 || titleHit);
     })
     .map(x => scoreItem(query, x));
 }
@@ -341,7 +348,7 @@ async function searchMaterials(query) {
     googleNaverBlog: googleNews(q, "site:blog.naver.com when:180d"),
     bingNews: bingNews(q, "freshness:Month"),
     bingNaverNews: bingNews(q, "site:news.naver.com"),
-    bingNaverBlog: bingWeb(q, "site:blog.naver.com"),
+    bingNaverBlog: Promise.resolve([]),
     openAlex: openAlex(q)
   };
   const entries = Object.entries(jobs);
@@ -376,8 +383,8 @@ async function searchMaterials(query) {
 
   // 네이버 도메인 판별을 RSS 결과의 실제 링크 기준으로 다시 수행합니다.
   results = results.map(item => {
-    if (isNaverNews(item.url)) return { ...item, type: "naver-news", source: "NAVER NEWS · RSS" };
-    if (isNaverBlog(item.url)) return { ...item, type: "column", source: "NAVER BLOG · RSS" };
+    if (isNaverNews(item.url) || isNaverNews(item.sourceUrl)) return { ...item, type: "naver-news", source: "NAVER NEWS · RSS" };
+    if (isNaverBlog(item.url) || isNaverBlog(item.sourceUrl)) return { ...item, type: "column", source: "NAVER BLOG · RSS" };
     return item;
   }).map(item => scoreItem(q, item));
 
@@ -396,7 +403,7 @@ async function searchMaterials(query) {
   results = [...urlMap.values()];
 
   // 검색어와 관계없는 결과가 화면을 채우는 것을 최우선으로 막습니다.
-  results = results.filter(x => x.relevance >= 55);
+  results = results.filter(x => { const tokens=queryTokens(q); const title=normalizeText(x.title); const minRel=tokens.length<=1?36:44; return x.relevance>=minRel && (tokens.length<=1 || tokens.some(t=>title.includes(t))); });
   results.sort((a, b) => b.rank - a.rank);
 
   let selected = selectBalanced(results, 15);
@@ -464,11 +471,11 @@ export default {
       return json({
         ok: true,
         service: "study-hub-pro",
-        version: "4.0.0",
+        version: "5.0.0",
         worker: "online",
         time: new Date().toISOString(),
         naverApiKeyRequired: false,
-        searchSources: ["Google News RSS", "Bing News RSS", "Naver News via RSS index", "Naver Blog via RSS index", "OpenAlex"],
+        searchSources: ["Google News RSS", "Bing News RSS", "Naver publisher results via RSS index", "OpenAlex"],
         wikipediaMode: "fallback-only"
       });
     }
