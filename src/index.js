@@ -127,24 +127,12 @@ function parseRssItems(xml = "") {
 }
 
 async function fetchGoogleNewsRss(query, site, days = 90) {
-  // Google News RSS의 site 필터가 빈 결과를 반환할 때를 대비해 검색어 기반 RSS로 재시도합니다.
-  const queries = [
-    `${query} site:${site} when:${days}d`,
-    `${query} site:${site}`,
-    `${query} when:${days}d`
-  ];
+  // 순차 재시도 대신 피드별 1회 요청으로 검색 지연을 줄입니다.
+  const q = `${query} site:${site} when:${days}d`;
   const headers = { Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8" };
-  let lastError;
-  for (const q of queries) {
-    try {
-      const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
-      const xml = await fetchText(url, 9000, headers);
-      const items = parseRssItems(xml);
-      if (items.length) return items;
-    } catch (error) { lastError = error; }
-  }
-  if (lastError) throw lastError;
-  return [];
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
+  const xml = await fetchText(url, 4500, headers);
+  return parseRssItems(xml);
 }
 
 async function searchMaterials(query, env) {
@@ -166,10 +154,10 @@ async function searchMaterials(query, env) {
 
   // 네이버 검색 API 키 없이 Google News RSS에서 네이버 도메인 결과를 별도 수집합니다.
   const tasks = [
-    fetchJson(openAlexRecentUrl),
-    fetchJson(openAlexRelevantUrl),
-    fetchJson(wikiUrl),
-    fetchText(googleNewsUrl),
+    fetchJson(openAlexRecentUrl, 5000),
+    fetchJson(openAlexRelevantUrl, 5000),
+    fetchJson(wikiUrl, 4000),
+    fetchText(googleNewsUrl, 4500, { Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8" }),
     fetchGoogleNewsRss(q, "news.naver.com", 90),
     fetchGoogleNewsRss(q, "blog.naver.com", 180)
   ];
@@ -296,7 +284,7 @@ async function searchMaterials(query, env) {
   if (imageTitles.length) {
     try {
       const imageUrl = `https://ko.wikipedia.org/w/api.php?action=query&format=json&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=520&pilicense=free&titles=${encodeURIComponent(imageTitles.join("|"))}`;
-      const imageData = await fetchJson(imageUrl, 7000);
+      const imageData = await fetchJson(imageUrl, 2500);
       const imageMap = new Map(Object.values(imageData.query?.pages || {})
         .filter(page => page.title && page.thumbnail?.source)
         .map(page => [normalizeTitle(page.title), page.thumbnail.source]));
@@ -322,7 +310,7 @@ async function searchMaterials(query, env) {
     recentCount,
     naverRssEnabled: true,
     ...(Object.keys(errors).length ? { providerWarnings: errors } : {})
-  }, 200, { "Cache-Control": "public, max-age=30" });
+  }, 200, { "Cache-Control": "public, max-age=60, stale-while-revalidate=120" });
 }
 
 export default {
