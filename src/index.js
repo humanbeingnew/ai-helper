@@ -1,4 +1,4 @@
-const VERSION = "9.0.0-rss-only";
+const VERSION = "10.0.0-rss-only-news-fallback";
 const MAX_QUERY_LENGTH = 200;
 const MAX_FEED_BYTES = 5 * 1024 * 1024;
 const RSS_CACHE_TTL_MS = 90 * 1000;
@@ -15,14 +15,29 @@ const JSON_HEADERS = {
 const FEED_HEADERS = {
   "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
   "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-  "User-Agent": "STUDY-HUB-PRO-RSS/9.0"
+  "User-Agent": "STUDY-HUB-PRO-RSS/10.0"
 };
 
 const ALLOWED_FEED_HOSTS = {
-  news: new Set(["news.google.com"]),
+  // Google News remains the primary news source. These publisher hosts are
+  // consulted only when Google's RSS is unavailable or returns no matches.
+  news: new Set([
+    "news.google.com",
+    "www.yna.co.kr", "yna.co.kr",
+    "www.newsis.com", "nwww.newsis.com",
+    "news.sbs.co.kr",
+    "www.mbn.co.kr", "mbn.co.kr"
+  ]),
   photos: new Set(["www.flickr.com", "flickr.com"]),
   academic: new Set(["rss.arxiv.org"])
 };
+
+const NEWS_BACKUP_FEEDS = [
+  { name: "연합뉴스", url: "https://www.yna.co.kr/rss/news.xml" },
+  { name: "뉴시스", url: "https://www.newsis.com/RSS/sokbo.xml" },
+  { name: "SBS 뉴스", url: "https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER" },
+  { name: "MBN", url: "https://www.mbn.co.kr/rss/" }
+];
 
 const rssMemoryCache = new Map();
 const rssInFlight = new Map();
@@ -426,6 +441,51 @@ function makeGoogleNewsFeed(query) {
   return url.toString();
 }
 
+async function fetchBackupNewsRss(query) {
+  const terms = queryTerms(query);
+  const settled = await Promise.allSettled(NEWS_BACKUP_FEEDS.map(async feed => {
+    const items = await fetchRss(feed.url, "news", 11000);
+    return items.map(item => ({
+      ...item,
+      source: item.source || feed.name,
+      provider: feed.name,
+      backupSource: true
+    }));
+  }));
+
+  const collected = [];
+  const failures = [];
+  let successfulFeeds = 0;
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      successfulFeeds += 1;
+      collected.push(...result.value);
+    } else {
+      const error = result.reason;
+      failures.push({
+        provider: NEWS_BACKUP_FEEDS[index].name,
+        failureKind: error?.details?.failureKind || "unknown",
+        upstreamStatus: error?.details?.upstreamStatus || null,
+        message: String(error?.message || error).slice(0, 160)
+      });
+    }
+  });
+
+  const matches = collected.filter(item => {
+    if (!terms.length) return true;
+    const haystack = normalizeText(`${item.title} ${item.description}`);
+    return terms.some(term => haystack.includes(term));
+  });
+
+  return {
+    items: matches,
+    totalCollected: collected.length,
+    successfulFeeds,
+    failedFeeds: failures,
+    feedsUsed: settled.flatMap((result, index) => result.status === "fulfilled" ? [NEWS_BACKUP_FEEDS[index].name] : [])
+  };
+}
+
 function makeFlickrFeed(query) {
   const url = new URL("https://www.flickr.com/services/feeds/photos_public.gne");
   url.searchParams.set("tags", query.replace(/\s+/g, ","));
@@ -493,12 +553,55 @@ async function searchMaterials(query, type) {
   let feedUrl = "";
   let provider = "";
   let results = [];
+  let newsFallbackUsed = false;
+  let newsFallbackReason = "";
+  let newsFallbackFeedsUsed = [];
+  let newsPrimaryError = null;
 
   try {
     if (type === "news") {
       provider = "Google News RSS";
       feedUrl = makeGoogleNewsFeed(q);
-      results = decorateItems(await fetchRss(feedUrl, "news"), "news", provider);
+      try {
+        const primaryItems = await fetchRss(feedUrl, "news");
+        // Google News already applies the user's search query upstream.
+        // Do not re-filter its own results using the short RSS summary.
+        if (primaryItems.length) {
+          results = decorateItems(primaryItems, "news", "Google News RSS");
+        } else {
+          newsFallbackReason = "Google News RSS 피드가 비어 있어 보완 RSS를 조회했습니다.";
+        }
+      } catch (error) {
+        newsPrimaryError = error;
+        newsFallbackReason = error instanceof Error ? error.message : "Google News RSS 연결 실패";
+      }
+
+      if (!results.length) {
+        const backup = await fetchBackupNewsRss(q);
+        newsFallbackUsed = true;
+        newsFallbackFeedsUsed = backup.feedsUsed;
+
+        if (backup.items.length) {
+          provider = "Google News 우선 · 국내 언론사 RSS 보완";
+          results = decorateItems(backup.items, "news", "국내 언론사 RSS");
+        } else if (backup.successfulFeeds > 0) {
+          provider = "국내 언론사 RSS 보완";
+          results = [];
+        } else {
+          const primaryDetails = newsPrimaryError instanceof RssFetchError ? newsPrimaryError.details : {};
+          throw new RssFetchError(
+            "Google News RSS와 국내 언론사 보완 RSS에 모두 연결하지 못했습니다.",
+            {
+              failureKind: "news_all_feeds_failed",
+              upstreamStatus: primaryDetails.upstreamStatus || null,
+              primaryFailureKind: primaryDetails.failureKind || "no_matching_items",
+              primaryMessage: String(newsPrimaryError?.message || newsFallbackReason).slice(0, 200),
+              backupFailures: backup.failedFeeds,
+              retryable: Boolean(primaryDetails.retryable)
+            }
+          );
+        }
+      }
     } else if (type === "photos") {
       provider = "Flickr Public Photos RSS";
       feedUrl = makeFlickrFeed(q);
@@ -536,7 +639,10 @@ async function searchMaterials(query, type) {
       contentType: details.upstreamContentType || details.contentType || "",
       upstreamDeclaredBytes: details.upstreamDeclaredBytes || null,
       accessRestrictionSuspected: Boolean(details.accessRestrictionSuspected),
-      notice: "RSS 연결에 실패했습니다. 다른 검색 제공처나 검색 방식으로 자동 전환하지 않았습니다."
+      primaryFailureKind: details.primaryFailureKind || "",
+      primaryMessage: details.primaryMessage || "",
+      backupFailures: details.backupFailures || [],
+      notice: "RSS 연결에 실패했습니다. JSON API나 웹페이지 검색으로 전환하지 않았습니다."
     }, 502);
   }
 
@@ -544,17 +650,26 @@ async function searchMaterials(query, type) {
     .sort((a, b) => b.relevance - a.relevance)
     .map(({ relevance, ...item }) => item);
 
+  const notice = type === "news" && newsFallbackUsed
+    ? results.length
+      ? `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 국내 언론사 공개 RSS에서 검색어 일치 기사 ${results.length}개를 찾았습니다. 모든 자료는 RSS에서만 수집했습니다.`
+      : `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 보완 RSS ${newsFallbackFeedsUsed.length}개는 연결됐지만 최근 피드에서 일치하는 기사를 찾지 못했습니다.`
+    : results.length
+      ? `${provider}에서 RSS 피드만 수집했습니다. 다른 API나 웹페이지 검색으로 대체하지 않았습니다.`
+      : "해당 RSS 피드에서 검색어와 맞는 자료를 찾지 못했습니다. 다른 검색 방식으로 자동 전환하지 않았습니다.";
+
   return json({
     query: q,
     type,
     results,
     total: results.length,
     provider,
-    notice: results.length
-      ? `${provider}에서 RSS 피드만 수집했습니다. 다른 API나 웹페이지 검색으로 대체하지 않았습니다.`
-      : "해당 RSS 피드에서 검색어와 맞는 자료를 찾지 못했습니다. 다른 검색 방식으로 자동 전환하지 않았습니다.",
+    notice,
     searchMode: "rss-only",
-    feedUrl
+    feedUrl,
+    newsFallbackUsed,
+    newsFallbackReason,
+    newsFallbackFeedsUsed
   }, 200, { "Cache-Control": "public, max-age=30, stale-while-revalidate=60" });
 }
 
@@ -572,13 +687,18 @@ export default {
         searchTypes: ["news", "photos", "academic"],
         rssOnly: true,
         feeds: {
-          news: "Google News RSS",
+          news: {
+            primary: "Google News RSS",
+            backup: NEWS_BACKUP_FEEDS.map(feed => ({ name: feed.name, url: feed.url })),
+            policy: "Google first; publisher RSS only when Google fails or has no matching items"
+          },
           photos: "Flickr Public Photos RSS",
           academic: "arXiv RSS category feeds"
         },
         notes: [
           "RSS 2.0/RSS 1.0 feeds only",
           "No JSON search APIs or HTML scraping",
+          "Google News is the primary news RSS source; official publisher RSS feeds are a transparent fallback",
           "Successful feed responses are cached briefly per Worker isolate"
         ]
       });

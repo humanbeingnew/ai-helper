@@ -36,7 +36,7 @@ function setSearchType(type){
   button.setAttribute('aria-selected',String(active));
  });
  $('#search-input').placeholder=searchTypeHints[type];
- $('#search-status').textContent=type==='news'?'Google News RSS 피드로 검색합니다.':type==='photos'?'Flickr 공개 사진 RSS 피드로 검색합니다.':'arXiv 학술 카테고리 RSS 피드로 검색합니다.';
+ $('#search-status').textContent=type==='news'?'Google News RSS를 먼저 검색하고, 연결 실패 시 국내 언론사 공개 RSS로 보완합니다.':type==='photos'?'Flickr 공개 사진 RSS 피드로 검색합니다.':'arXiv 학술 카테고리 RSS 피드로 검색합니다.';
 }
 const searchTypeButtons=$$('[data-search-type]');
 searchTypeButtons.forEach(button=>button.addEventListener('click',()=>setSearchType(button.dataset.searchType)));
@@ -45,6 +45,11 @@ setSearchType('news');
 function describeRssFailure(data,status){
  const provider=data?.provider||'RSS 제공처';
  const upstream=Number(data?.upstreamStatus||0);
+ if(data?.failureKind==='news_all_feeds_failed'){
+  const backup=(Array.isArray(data.backupFailures)?data.backupFailures:[]).map(x=>`${x.provider}: ${x.upstreamStatus?`HTTP ${x.upstreamStatus}`:x.failureKind}`).join(' · ');
+  const primary=data.primaryMessage?`Google News: ${data.primaryMessage}`:'Google News RSS 연결 실패';
+  return `${primary}. 국내 언론사 RSS 보완 경로도 모두 실패했습니다.${backup?` 보완 경로 상태: ${backup}`:''}`;
+ }
  if(data?.failureKind==='upstream_access_restricted'||data?.accessRestrictionSuspected){
   return `${provider}가 자동 요청 또는 접근 제한 안내가 포함된 HTTP 503 응답을 반환했습니다. Cloudflare Worker의 외부 IP가 제한 대상인지 확인해야 합니다. 코드에서 검색 API로 우회하지 않으며, 이 제한은 재시도나 요청 헤더 변경만으로 풀리지 않을 수 있습니다.`;
  }
@@ -85,7 +90,7 @@ $('#search-form').addEventListener('submit',async e=>{
  const controller=new AbortController();
  searchController=controller;
  const requestId=++searchRequestId;
- const timeout=setTimeout(()=>controller.abort(),35000);
+ const timeout=setTimeout(()=>controller.abort(),65000);
  const btn=e.submitter||$('#search-form button[type="submit"]');
  const requestedType=searchType;
  btn.disabled=true;
@@ -115,7 +120,9 @@ $('#search-form').addEventListener('submit',async e=>{
   }
   const items=Array.isArray(d.results)?d.results:[];
   $('#search-status').textContent=d.notice||`“${q}” 관련 자료 ${items.length}개 · ${d.provider||'RSS'}`;
-  box.innerHTML=items.length?renderSearchResults(items,requestedType,d.provider):'<div class="empty-state"><div>⌕</div><h3>검색 결과가 없어요</h3><p>검색어를 바꾸거나 다른 자료 유형을 선택해 보세요. RSS가 실패한 경우 다른 검색 방식으로 자동 전환하지 않습니다.</p></div>';
+  box.innerHTML=items.length?renderSearchResults(items,requestedType,d.provider):d.newsFallbackUsed
+   ?'<div class="empty-state"><div>⌕</div><h3>일치하는 뉴스가 없어요</h3><p>Google News RSS 연결이 원활하지 않아 연합뉴스·뉴시스·SBS·MBN의 최근 공개 RSS도 확인했지만, 현재 피드에서 검색어와 일치하는 기사를 찾지 못했습니다. 검색어를 조금 넓혀 다시 시도해 보세요.</p></div>'
+   :'<div class="empty-state"><div>⌕</div><h3>검색 결과가 없어요</h3><p>검색어를 바꾸거나 다른 자료 유형을 선택해 보세요. 모든 자료 검색은 RSS 피드만 사용합니다.</p></div>';
   if(!saveHistory({type:'search',title:`${searchTypeLabels[requestedType]} · ${q}`}))toast('검색 결과는 표시됐지만 브라우저 기록 저장은 건너뛰었어요.');
  }catch(err){
   if(requestId!==searchRequestId)return;
