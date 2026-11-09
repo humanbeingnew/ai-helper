@@ -23,13 +23,115 @@ function escapeHtml(v=''){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','
 function truncate(s,n=320){return(s||'').length>n?s.slice(0,n).trim()+'…':s||''}
 function formatResultDate(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(d.getTime()))return '';return new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'short',day:'numeric'}).format(d)}
 let searchController=null;
+let searchRequestId=0;
 let searchType='news';
 const searchTypeLabels={news:'뉴스',photos:'사진',academic:'학술자료'};
 const searchTypeHints={news:'예: 인공지능이 교육에 미치는 영향',photos:'예: 제주도 바다, 로봇, 우주',academic:'예: 인공지능, 머신러닝, 로봇'};
-function setSearchType(type){if(!Object.hasOwn(searchTypeLabels,type))return;searchType=type;$$('[data-search-type]').forEach(button=>{const active=button.dataset.searchType===type;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active))});$('#search-input').placeholder=searchTypeHints[type];$('#search-status').textContent=type==='news'?'Google News RSS 피드로 검색합니다.':type==='photos'?'Flickr 공개 사진 RSS 피드로 검색합니다.':'arXiv 학술 카테고리 RSS 피드로 검색합니다.'}
-$$('[data-search-type]').forEach(button=>button.addEventListener('click',()=>setSearchType(button.dataset.searchType)));
+function setSearchType(type){
+ if(!Object.hasOwn(searchTypeLabels,type))return;
+ searchType=type;
+ $$('[data-search-type]').forEach(button=>{
+  const active=button.dataset.searchType===type;
+  button.classList.toggle('active',active);
+  button.setAttribute('aria-selected',String(active));
+ });
+ $('#search-input').placeholder=searchTypeHints[type];
+ $('#search-status').textContent=type==='news'?'Google News RSS 피드로 검색합니다.':type==='photos'?'Flickr 공개 사진 RSS 피드로 검색합니다.':'arXiv 학술 카테고리 RSS 피드로 검색합니다.';
+}
+const searchTypeButtons=$$('[data-search-type]');
+searchTypeButtons.forEach(button=>button.addEventListener('click',()=>setSearchType(button.dataset.searchType)));
 setSearchType('news');
-$('#search-form').addEventListener('submit',async e=>{e.preventDefault();const q=$('#search-input').value.trim();if(q.length<2){toast('검색어를 2자 이상 입력해 주세요.');$('#search-input').focus();return;}if(searchController)searchController.abort();searchController=new AbortController();const timeout=setTimeout(()=>searchController.abort(),16000);const btn=e.submitter||$('#search-form button[type=\"submit\"]');const requestedType=searchType;btn.disabled=true;const box=$('#search-results');$('#search-status').textContent=`${searchTypeLabels[requestedType]} RSS 피드를 불러오고 있어요…`;box.innerHTML='<div class="empty-state"><div>◌</div><h3>RSS 피드를 읽는 중입니다</h3><p>RSS 제공처에서 자료를 직접 가져오고 있어요.</p></div>';try{const r=await fetch(`/api/search?type=${encodeURIComponent(requestedType)}&q=${encodeURIComponent(q)}`,{signal:searchController.signal});let d;try{d=await r.json()}catch{throw Error(`서버가 JSON이 아닌 응답을 보냈어요. HTTP ${r.status}. Cloudflare Worker 배포 설정을 확인해 주세요.`)}if(!r.ok)throw Error(d.error||`RSS 검색에 실패했습니다. (HTTP ${r.status})`);const a=Array.isArray(d.results)?d.results:[];$('#search-status').textContent=d.notice||`“${q}” 관련 자료 ${a.length}개 · ${d.provider||'RSS'}`;box.innerHTML=a.length?a.map(x=>{const date=formatResultDate(x.publishedAt);const category=x.category||searchTypeLabels[requestedType];const image=x.image?`<div class="result-image-wrap"><img class="result-image" src="${escapeHtml(x.image)}" alt="${escapeHtml(x.title)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.result-image-wrap').remove()"></div>`:'';const extra=x.author?`<small class="result-credit">사진 제공: ${escapeHtml(x.author)}${x.license?` · ${escapeHtml(x.license)}`:' · 이용 조건은 원문에서 확인'}</small>`:'';return `<article class="result-card${x.image?' has-image':''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(x.type||'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(x.source||d.provider||'RSS')}</span>${date?`<span class="muted-label">${escapeHtml(date)}</span>`:''}</div><h3>${escapeHtml(x.title)}</h3><p>${escapeHtml(truncate(x.description,requestedType==='photos'?180:320))}</p>${extra}<a href="${escapeHtml(x.url)}" target="_blank" rel="noopener noreferrer">${requestedType==='photos'?'사진 원본 및 라이선스 확인 ↗':'원문 및 출처 확인 ↗'}</a></div></article>`}).join(''):'<div class="empty-state"><div>⌕</div><h3>검색 결과가 없어요</h3><p>검색어를 바꾸거나 다른 자료 유형을 선택해 보세요. RSS가 실패한 경우 다른 방식으로 자동 전환하지 않습니다.</p></div>';if(!saveHistory({type:'search',title:`${searchTypeLabels[requestedType]} · ${q}`})) toast('검색 결과는 표시됐지만 브라우저 기록 저장은 건너뛰었어요.')}catch(err){if(err.name==='AbortError'){ $('#search-status').textContent='검색 시간이 초과됐어요.';box.innerHTML='<div class="empty-state"><div>!</div><h3>RSS 피드 응답이 늦어지고 있어요</h3><p>잠시 후 다시 시도해 주세요.</p></div>'}else{$('#search-status').textContent='RSS 검색 중 문제가 발생했습니다.';box.innerHTML=`<div class="empty-state"><div>!</div><h3>RSS 자료를 불러오지 못했어요</h3><p>${escapeHtml(err.message)}</p><p>다른 검색 방식으로 대체하지 않았습니다.</p></div>`}}finally{clearTimeout(timeout);btn.disabled=false;searchController=null}});
+
+function describeRssFailure(data,status){
+ const provider=data?.provider||'RSS 제공처';
+ const upstream=Number(data?.upstreamStatus||0);
+ if(data?.failureKind==='upstream_access_restricted'||data?.accessRestrictionSuspected){
+  return `${provider}가 자동 요청 또는 접근 제한 안내가 포함된 HTTP 503 응답을 반환했습니다. Cloudflare Worker의 외부 IP가 제한 대상인지 확인해야 합니다. 코드에서 검색 API로 우회하지 않으며, 이 제한은 재시도나 요청 헤더 변경만으로 풀리지 않을 수 있습니다.`;
+ }
+ if(upstream===503){
+  return `${provider}가 HTTP 503(일시적인 서비스 불가)을 반환했습니다. 브라우저 오류가 아니라 RSS 제공처 응답 오류입니다. 서버 측 일시 장애인지 실행 서버 IP 제한인지 응답 내용을 추가로 확인해야 합니다. Worker API의 HTTP ${status}는 이 제공처 오류를 전달한 상태 코드입니다.`;
+ }
+ if(upstream===429){
+  const wait=data?.retryAfterSeconds?` 약 ${data.retryAfterSeconds}초 후 다시 시도해 주세요.`:' 잠시 기다린 뒤 다시 시도해 주세요.';
+  return `${provider}가 HTTP 429(요청 횟수 제한)를 반환했습니다.${wait}`;
+ }
+ if(upstream){
+  return `${provider}가 HTTP ${upstream}을 반환했습니다. RSS 제공처의 응답 상태를 확인해 주세요.`;
+ }
+ if(data?.failureKind==='upstream_timeout')return `${provider}의 RSS 응답 시간이 초과됐습니다. 네트워크 상태와 제공처 응답을 확인해 주세요.`;
+ if(data?.failureKind==='upstream_network_error')return `${provider}에 연결하지 못했습니다. Worker의 외부 통신, DNS 및 제공처 상태를 확인해 주세요.`;
+ if(data?.failureKind==='invalid_rss')return `${provider}가 정상적인 RSS 형식이 아닌 응답을 반환했습니다. 제공처의 피드 형식이 변경됐는지 확인해야 합니다.`;
+ if(data?.failureKind==='unexpected_content_type')return `${provider}가 RSS/XML이 아닌 콘텐츠 형식을 반환했습니다. 로그인·오류 HTML 페이지가 RSS 주소에서 반환됐는지 확인해야 합니다.`;
+ if(data?.failureKind==='unexpected_redirect')return `${provider}가 허용되지 않은 다른 주소로 이동해 보안상 요청을 중단했습니다.`;
+ if(data?.failureKind==='feed_too_large')return `${provider}의 RSS 피드가 허용 크기(5MB)를 넘었습니다. 피드 범위를 좁히거나 제공처의 응답 크기를 확인해야 합니다.`;
+ return data?.error||`RSS 검색에 실패했습니다. (HTTP ${status})`;
+}
+
+function renderSearchResults(items,requestedType,provider){
+ return items.map(x=>{
+  const date=formatResultDate(x.publishedAt);
+  const category=x.category||searchTypeLabels[requestedType];
+  const image=x.image?`<div class="result-image-wrap"><img class="result-image" src="${escapeHtml(x.image)}" alt="${escapeHtml(x.title)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.result-image-wrap').remove()"></div>`:'';
+  const extra=x.author?`<small class="result-credit">사진 제공: ${escapeHtml(x.author)}${x.license?` · ${escapeHtml(x.license)}`:' · 이용 조건은 원문에서 확인'}</small>`:'';
+  return `<article class="result-card${x.image?' has-image':''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(x.type||'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(x.source||provider||'RSS')}</span>${date?`<span class="muted-label">${escapeHtml(date)}</span>`:''}</div><h3>${escapeHtml(x.title)}</h3><p>${escapeHtml(truncate(x.description,requestedType==='photos'?180:320))}</p>${extra}<a href="${escapeHtml(x.url)}" target="_blank" rel="noopener noreferrer">${requestedType==='photos'?'사진 원본 및 라이선스 확인 ↗':'원문 및 출처 확인 ↗'}</a></div></article>`;
+ }).join('');
+}
+
+$('#search-form').addEventListener('submit',async e=>{
+ e.preventDefault();
+ const q=$('#search-input').value.trim();
+ if(q.length<2){toast('검색어를 2자 이상 입력해 주세요.');$('#search-input').focus();return;}
+ if(searchController)searchController.abort();
+ const controller=new AbortController();
+ searchController=controller;
+ const requestId=++searchRequestId;
+ const timeout=setTimeout(()=>controller.abort(),35000);
+ const btn=e.submitter||$('#search-form button[type="submit"]');
+ const requestedType=searchType;
+ btn.disabled=true;
+ const box=$('#search-results');
+ $('#search-status').textContent=`${searchTypeLabels[requestedType]} RSS 피드를 불러오고 있어요…`;
+ box.innerHTML='<div class="empty-state"><div>◌</div><h3>RSS 피드를 읽는 중입니다</h3><p>선택한 RSS 제공처에서 자료를 직접 가져오고 있어요.</p></div>';
+ try{
+  const r=await fetch(`/api/search?type=${encodeURIComponent(requestedType)}&q=${encodeURIComponent(q)}`,{signal:controller.signal,headers:{'Accept':'application/json'}});
+  let d;
+  try{d=await r.json();}
+  catch{throw new Error(`서버가 JSON이 아닌 응답을 보냈어요. HTTP ${r.status}. Cloudflare Worker 배포 설정을 확인해 주세요.`);}
+  if(requestId!==searchRequestId)return;
+  if(!r.ok){
+   const detail=describeRssFailure(d,r.status);
+   const upstreamMeta=[d.contentType?`형식: ${d.contentType}`:'',d.upstreamDeclaredBytes?`응답 크기: ${Number(d.upstreamDeclaredBytes).toLocaleString('ko-KR')} bytes`:''].filter(Boolean).join(' · ');
+   const upstreamText=d.upstreamMessage?`<p class="muted-label">제공처 응답 요약: ${escapeHtml(d.upstreamMessage)}</p>`:'';
+   const metaText=upstreamMeta?`<p class="muted-label">${escapeHtml(upstreamMeta)}</p>`:'';
+   let feedLink='';
+   try{
+    const feedUrl=new URL(d.feedUrl);
+    const approvedHosts=['news.google.com','www.flickr.com','flickr.com','rss.arxiv.org'];
+    if(feedUrl.protocol==='https:'&&approvedHosts.includes(feedUrl.hostname))feedLink=`<p><a href="${escapeHtml(feedUrl.href)}" target="_blank" rel="noopener noreferrer">RSS 원본 주소를 새 탭에서 직접 확인 ↗</a></p>`;
+   }catch{}
+   $('#search-status').textContent='RSS 제공처 연결에 실패했습니다.';
+   box.innerHTML=`<div class="empty-state"><div>!</div><h3>RSS 자료를 불러오지 못했어요</h3><p>${escapeHtml(detail)}</p>${upstreamText}${metaText}${feedLink}<p>다른 검색 방식으로 대체하지 않았습니다.</p></div>`;
+   return;
+  }
+  const items=Array.isArray(d.results)?d.results:[];
+  $('#search-status').textContent=d.notice||`“${q}” 관련 자료 ${items.length}개 · ${d.provider||'RSS'}`;
+  box.innerHTML=items.length?renderSearchResults(items,requestedType,d.provider):'<div class="empty-state"><div>⌕</div><h3>검색 결과가 없어요</h3><p>검색어를 바꾸거나 다른 자료 유형을 선택해 보세요. RSS가 실패한 경우 다른 검색 방식으로 자동 전환하지 않습니다.</p></div>';
+  if(!saveHistory({type:'search',title:`${searchTypeLabels[requestedType]} · ${q}`}))toast('검색 결과는 표시됐지만 브라우저 기록 저장은 건너뛰었어요.');
+ }catch(err){
+  if(requestId!==searchRequestId)return;
+  if(err.name==='AbortError'){
+   $('#search-status').textContent='검색 시간이 초과됐어요.';
+   box.innerHTML='<div class="empty-state"><div>!</div><h3>RSS 피드 응답이 늦어지고 있어요</h3><p>제공처가 응답하지 않았습니다. 잠시 후 다시 시도해 주세요.</p></div>';
+  }else{
+   $('#search-status').textContent='RSS 검색 중 문제가 발생했습니다.';
+   box.innerHTML=`<div class="empty-state"><div>!</div><h3>RSS 자료를 불러오지 못했어요</h3><p>${escapeHtml(err.message)}</p><p>다른 검색 방식으로 대체하지 않았습니다.</p></div>`;
+  }
+ }finally{
+  clearTimeout(timeout);
+  if(searchController===controller)searchController=null;
+  if(requestId===searchRequestId){btn.disabled=false;searchTypeButtons.forEach(button=>button.disabled=false);}
+ }
+});
 const textArea=$('#task-content');textArea.addEventListener('input',()=>$('#char-count').textContent=`${textArea.value.length.toLocaleString('ko-KR')}자`);
 function hasConclusion(s){return/(결론적으로|정리하면|요약하면|따라서|이상으로|결론은|마지막으로)/.test(s.slice(-Math.max(100,Math.floor(s.length*.35))))}
 function analyzeStudyText(content,topic,type){
