@@ -1,6 +1,6 @@
 name = "study-hub-pro"
 main = "src/index.js"
-compatibility_date = "2026-11-08"
+compatibility_date = "2026-11-09"
 
 [assets]
 directory = "./public"

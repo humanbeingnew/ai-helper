@@ -3,14 +3,9 @@ const JSON_HEADERS = {
   "Cache-Control": "no-store"
 };
 
-const RSS_HEADERS = {
-  "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
-  "User-Agent": "STUDY-HUB-PRO/4.0 (+https://study-hub-pro.pages.dev)"
-};
-
-const API_HEADERS = {
-  "Accept": "application/json",
-  "User-Agent": "STUDY-HUB-PRO/4.0"
+const FEED_HEADERS = {
+  "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+  "User-Agent": "STUDY-HUB-PRO/7.0 (RSS-only learning search)"
 };
 
 const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
@@ -18,449 +13,285 @@ const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.string
   headers: { ...JSON_HEADERS, ...extraHeaders }
 });
 
-function clean(value = "") {
+function decodeXml(value = "") {
   return String(value)
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]*>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, num) => String.fromCodePoint(Number(num)))
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&apos;|&#39;/g, "'");
+}
+
+function textOnly(value = "") {
+  return decodeXml(value)
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
+function getTag(block = "", tagName = "") {
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = block.match(new RegExp(`<${escaped}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}\\s*>`, "i"));
+  return match ? match[1] : "";
+}
+
+function getAttribute(tag = "", name = "") {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(new RegExp(`\\b${escaped}\\s*=\\s*([\"'])([\\s\\S]*?)\\1`, "i"));
+  return match ? decodeXml(match[2]) : "";
+}
+
+function safeHttpUrl(value = "") {
+  try {
+    const url = new URL(textOnly(value));
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function getFirstTag(block, names) {
+  for (const name of names) {
+    const value = getTag(block, name);
+    if (value) return value;
+  }
+  return "";
+}
+
+function parseRss(xml, kind) {
+  if (typeof xml !== "string" || !/<rss\b|<rdf:RDF\b/i.test(xml)) {
+    throw new Error("RSS 2.0 형식이 아닌 응답을 받았습니다.");
+  }
+
+  const blocks = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item\s*>/gi)].map(match => match[1]);
+  return blocks.map(block => {
+    const title = textOnly(getTag(block, "title"));
+    const descriptionRaw = getFirstTag(block, ["description", "content:encoded"]);
+    const description = textOnly(descriptionRaw);
+    const link = safeHttpUrl(textOnly(getTag(block, "link")) || textOnly(getTag(block, "guid")));
+    const sourceBlock = block.match(/<source\b([^>]*)>([\s\S]*?)<\/source\s*>/i);
+    const source = sourceBlock ? textOnly(sourceBlock[2]) : "";
+    const sourceUrl = sourceBlock ? safeHttpUrl(getAttribute(`<source ${sourceBlock[1]}>`, "url")) : "";
+    const pubDate = textOnly(getTag(block, "pubDate"));
+    const imageTag = block.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*>/i);
+    const imageFromHtml = descriptionRaw.match(/<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/i);
+    const image = safeHttpUrl(imageTag
+      ? getAttribute(imageTag[0], "url")
+      : imageFromHtml ? decodeXml(imageFromHtml[2]) : "");
+    const author = textOnly(getFirstTag(block, ["dc:creator", "author", "media:credit"])) || "";
+    const license = textOnly(getTag(block, "media:license")) || "";
+
+    return {
+      title,
+      description,
+      url: link,
+      source: source || (kind === "photos" ? "Flickr" : ""),
+      sourceUrl,
+      publishedAt: parseDate(pubDate),
+      image,
+      author,
+      license
+    };
+  }).filter(item => item.title && item.url);
+}
+
+function parseDate(value = "") {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
 function normalizeText(value = "") {
-  return clean(value).toLowerCase()
+  return textOnly(value).toLowerCase()
     .replace(/[“”‘’'"`]/g, "")
     .replace(/[^0-9a-z가-힣\s]/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function queryTokens(query = "") {
-  const raw = normalizeText(query).split(/\s+/).filter(Boolean);
-  const particles = /(으로부터|에게서|에서는|으로는|이라도|까지는|부터는|에게|에서|으로|이라|이랑|하고|보다|처럼|까지|부터|의|은|는|이|가|을|를|에|와|과|로)$/;
-  const out = [];
-  for (const token of raw) {
-    if (token.length >= 2) out.push(token);
-    const stem = token.replace(particles, "");
-    if (stem.length >= 2) out.push(stem);
+function queryTerms(query = "") {
+  return [...new Set(normalizeText(query).split(/\s+/).filter(token => token.length >= 2))];
+}
+
+function scoreResult(query, item) {
+  const terms = queryTerms(query);
+  const title = normalizeText(item.title);
+  const description = normalizeText(item.description);
+  const titleHits = terms.filter(term => title.includes(term)).length;
+  const bodyHits = terms.filter(term => description.includes(term)).length;
+  const coverage = terms.length ? (titleHits + bodyHits) / terms.length : 0;
+  return { ...item, relevance: titleHits * 5 + bodyHits * 2 + coverage * 4 };
+}
+
+function dedupe(items) {
+  const seen = new Set();
+  const output = [];
+  for (const item of items) {
+    const key = normalizeText(item.title);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
   }
-  return [...new Set(out)];
+  return output;
 }
 
-function dateMs(value) {
-  const t = Date.parse(value || "");
-  return Number.isFinite(t) ? t : 0;
-}
-
-function ageDays(value) {
-  const t = dateMs(value);
-  if (!t) return Infinity;
-  return Math.max(0, (Date.now() - t) / 86400000);
-}
-
-function freshness(value) {
-  const d = ageDays(value);
-  if (!Number.isFinite(d)) return -6;
-  if (d <= 1) return 40;
-  if (d <= 3) return 35;
-  if (d <= 7) return 30;
-  if (d <= 14) return 25;
-  if (d <= 30) return 18;
-  if (d <= 90) return 9;
-  if (d <= 180) return 2;
-  if (d <= 365) return -8;
-  return -25;
-}
-
-function relevance(query, title = "", description = "") {
-  const q = normalizeText(query);
-  const t = normalizeText(title);
-  const d = normalizeText(description);
-  if (!q || !t) return 0;
-  const tokens = queryTokens(query);
-  let score = 0;
-  if (t === q) score += 120;
-  if (t.includes(q)) score += 80;
-  if (d.includes(q)) score += 20;
-
-  let titleHits = 0;
-  let bodyHits = 0;
-  for (const token of tokens) {
-    if (t.includes(token)) { score += 32; titleHits++; }
-    else if (d.includes(token)) { score += 9; bodyHits++; }
-  }
-  if (tokens.length > 1) {
-    const coverage = (titleHits + bodyHits) / tokens.length;
-    score += Math.round(coverage * 35);
-    if (titleHits === tokens.length) score += 35;
-  }
-  return score;
-}
-
-function isRecentEnough(item, maxDays) {
-  const d = ageDays(item.publishedAt);
-  return !Number.isFinite(d) ? false : d <= maxDays;
-}
-
-function sourceWeight(type) {
-  return {
-    "naver-news": 12,
-    "news": 9,
-    "column": 7,
-    "academic": 5,
-    "reference": -20
-  }[type] ?? 0;
-}
-
-function scoreItem(query, item) {
-  const rel = relevance(query, item.title, item.description);
-  const fresh = freshness(item.publishedAt);
-  const score = rel * 2 + fresh + sourceWeight(item.type);
-  return { ...item, relevance: rel, rank: score };
-}
-
-function parseDate(value = "") {
-  const v = clean(value);
-  if (!v) return "";
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
-}
-
-async function fetchWithTimeout(url, timeoutMs, headers = {}) {
+async function fetchRss(url, kind, timeoutMs = 9000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { method: "GET", headers, redirect: "follow", signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response;
+    const response = await fetch(url, {
+      method: "GET",
+      headers: FEED_HEADERS,
+      signal: controller.signal,
+      redirect: "follow"
+    });
+    if (!response.ok) throw new Error(`RSS 제공처 응답 오류 (HTTP ${response.status})`);
+    const xml = await response.text();
+    if (xml.length > 8_000_000) throw new Error("RSS 피드가 너무 큽니다.");
+    return parseRss(xml, kind);
   } catch (error) {
-    if (error?.name === "AbortError") throw new Error(`timeout(${timeoutMs}ms)`);
-    throw error instanceof Error ? error : new Error(String(error));
+    if (error?.name === "AbortError") throw new Error("RSS 응답 시간이 초과됐습니다.");
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function fetchJson(url, timeoutMs = 4500) {
-  const response = await fetchWithTimeout(url, timeoutMs, API_HEADERS);
-  const text = await response.text();
-  try { return JSON.parse(text); }
-  catch { throw new Error("invalid-json"); }
+function makeGoogleNewsFeed(query) {
+  const url = new URL("https://news.google.com/rss/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("hl", "ko");
+  url.searchParams.set("gl", "KR");
+  url.searchParams.set("ceid", "KR:ko");
+  return url.toString();
 }
 
-async function fetchXml(url, timeoutMs = 4500) {
-  const response = await fetchWithTimeout(url, timeoutMs, RSS_HEADERS);
-  return response.text();
+function makeFlickrFeed(query) {
+  const url = new URL("https://www.flickr.com/services/feeds/photos_public.gne");
+  url.searchParams.set("tags", query.replace(/\s+/g, ","));
+  url.searchParams.set("tagmode", "any");
+  url.searchParams.set("format", "rss_200");
+  url.searchParams.set("lang", "ko-kr");
+  return url.toString();
 }
 
-function xmlTag(block, tag) {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i");
-  const m = block.match(re);
-  return m ? clean(m[1]) : "";
+const ACADEMIC_RULES = [
+  { test: /인공지능|artificial intelligence|\bai\b/i, categories: ["cs.AI", "cs.LG", "stat.ML"], terms: ["artificial intelligence", "machine learning"] },
+  { test: /머신러닝|기계학습|machine learning|딥러닝|deep learning/i, categories: ["cs.LG", "stat.ML", "cs.AI"], terms: ["machine learning", "deep learning"] },
+  { test: /자연어|언어모델|번역|챗봇|자연어처리|natural language|language model/i, categories: ["cs.CL", "cs.AI"], terms: ["natural language", "language model"] },
+  { test: /컴퓨터.?비전|이미지.?인식|영상.?인식|computer vision|image recognition/i, categories: ["cs.CV", "cs.AI"], terms: ["computer vision", "image recognition"] },
+  { test: /로봇|robot/i, categories: ["cs.RO", "cs.AI"], terms: ["robotics", "robot"] },
+  { test: /보안|암호|해킹|security|cryptography/i, categories: ["cs.CR", "cs.CY"], terms: ["security", "cryptography"] },
+  { test: /경제|금융|주식|econom|finance/i, categories: ["econ", "q-fin"], terms: ["economics", "finance"] },
+  { test: /생물|생명|의학|바이오|biology|medical/i, categories: ["q-bio"], terms: ["biology", "medical"] },
+  { test: /물리|양자|physics|quantum/i, categories: ["physics", "quant-ph"], terms: ["physics", "quantum"] },
+  { test: /수학|통계|math|statistics/i, categories: ["math", "stat"], terms: ["mathematics", "statistics"] },
+  { test: /기후|환경|에너지|climate|environment|energy/i, categories: ["physics.ao-ph", "econ.GN"], terms: ["climate", "environment", "energy"] },
+  { test: /교육|학습|학교|education|learning/i, categories: ["cs.HC", "cs.CY"], terms: ["education", "learning", "educational technology"] },
+  { test: /소프트웨어|프로그래밍|코딩|software|programming/i, categories: ["cs.SE", "cs.PL"], terms: ["software", "programming"] }
+];
+
+function academicFeedPlan(query) {
+  const matched = ACADEMIC_RULES.filter(rule => rule.test.test(query));
+  const categories = matched.length
+    ? [...new Set(matched.flatMap(rule => rule.categories))]
+    : ["cs", "stat.ML"];
+  const expandedTerms = matched.flatMap(rule => rule.terms);
+  return {
+    url: `https://rss.arxiv.org/rss/${categories.join("+")}`,
+    categories,
+    terms: [...new Set([...queryTerms(query), ...queryTerms(expandedTerms.join(" "))])]
+  };
 }
 
-function xmlAttr(block, tag, attr) {
-  const re = new RegExp(`<${tag}\\b[^>]*\\b${attr}=["']([^"']+)["'][^>]*>`, "i");
-  const m = block.match(re);
-  return m ? clean(m[1]) : "";
+function academicMatches(query, item, terms) {
+  const haystack = normalizeText(`${item.title} ${item.description}`);
+  const originalTerms = queryTerms(query);
+  const allTerms = [...new Set([...terms, ...originalTerms])];
+  if (!allTerms.length) return true;
+  return allTerms.some(term => haystack.includes(term));
 }
 
-function parseFeed(xml = "") {
-  const items = [];
-  const rssItems = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map(m => m[0]);
-  const atomItems = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map(m => m[0]);
-
-  for (const block of [...rssItems, ...atomItems]) {
-    const linkTag = block.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*>/i);
-    const rawLink = xmlTag(block, "link") || (linkTag ? clean(linkTag[1]) : "");
-    const enclosure = xmlAttr(block, "enclosure", "url") || xmlAttr(block, "media:content", "url") || xmlAttr(block, "media:thumbnail", "url");
-    const sourceMatch = block.match(/<source\b[^>]*\burl=["']([^"']+)["'][^>]*>([\s\S]*?)<\/source>/i);
-    const source = sourceMatch ? clean(sourceMatch[2]) : (xmlTag(block, "News:Source") || xmlTag(block, "dc:creator"));
-    const sourceUrl = sourceMatch ? clean(sourceMatch[1]) : "";
-    const title = xmlTag(block, "title");
-    const description = xmlTag(block, "description") || xmlTag(block, "summary") || xmlTag(block, "content");
-    const publishedAt = parseDate(xmlTag(block, "pubDate") || xmlTag(block, "published") || xmlTag(block, "updated") || xmlTag(block, "dc:date"));
-    if (title && rawLink) items.push({ title, description, url: rawLink, publishedAt, source, sourceUrl, image: enclosure });
-  }
-  return items;
-}
-
-function unwrapBingUrl(url = "") {
-  try {
-    const u = new URL(url);
-    if (u.hostname.endsWith("bing.com") && u.pathname === "/news/apiclick.aspx") {
-      return u.searchParams.get("url") || url;
-    }
-  } catch {}
-  return url;
-}
-
-async function googleNews(query, extra = "") {
-  const q = extra ? `${query} ${extra}` : query;
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=ko&gl=KR&ceid=KR:ko`;
-  return parseFeed(await fetchXml(url, 4200));
-}
-
-async function bingNews(query, extra = "") {
-  const q = extra ? `${query} ${extra}` : query;
-  const url = `https://www.bing.com/news/search?q=${encodeURIComponent(q)}&setmkt=ko-KR&format=rss`;
-  return parseFeed(await fetchXml(url, 4200)).map(x => ({ ...x, url: unwrapBingUrl(x.url) }));
-}
-
-async function bingWeb(query, extra = "") {
-  const q = extra ? `${query} ${extra}` : query;
-  const url = `https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=ko-KR&format=rss`;
-  return parseFeed(await fetchXml(url, 4200)).map(x => ({ ...x, url: unwrapBingUrl(x.url) }));
-}
-
-async function openAlex(query) {
-  const cutoff = new Date();
-  cutoff.setFullYear(cutoff.getFullYear() - 5);
-  const date = cutoff.toISOString().slice(0, 10);
-  const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&filter=from_publication_date:${date}&per-page=30&sort=relevance_score:desc`;
-  const data = await fetchJson(url, 4800);
-  return (data.results || []).map(work => ({
-    source: "OPENALEX · 학술 자료",
-    type: "academic",
-    title: clean(work.display_name),
-    description: clean(work.abstract_inverted_index ? Object.keys(work.abstract_inverted_index).slice(0, 40).join(" ") : ((work.authorships || []).slice(0, 3).map(a => a.author?.display_name).filter(Boolean).join(", ") || "공개 학술 메타데이터")),
-    publishedAt: parseDate(work.publication_date),
-    url: work.primary_location?.landing_page_url || work.doi || work.id,
-    image: "",
-    openAlexScore: Number(work.relevance_score || 0)
-  })).filter(x => x.title && x.url);
-}
-
-async function wikipedia(query) {
-  const url = `https://ko.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=5&srnamespace=0&srprop=snippet&format=json`;
-  const data = await fetchJson(url, 3500);
-  return (data.query?.search || []).map(page => ({
-    source: "WIKIPEDIA · 배경 자료",
-    type: "reference",
-    title: clean(page.title),
-    description: clean(page.snippet),
-    publishedAt: "",
-    url: `https://ko.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}`,
-    image: ""
-  }));
-}
-
-function toNewsItems(items, type = "news", label = "NEWS") {
+function decorateItems(items, type, provider) {
   return items.map(item => ({
-    source: item.source ? `${label} · ${item.source}` : label,
-    sourceUrl: item.sourceUrl || "",
+    ...item,
     type,
-    title: item.title,
-    description: item.description || "",
-    publishedAt: item.publishedAt || "",
-    url: item.url,
-    image: item.image || ""
+    category: type === "news" ? "뉴스" : type === "photos" ? "사진" : "학술자료",
+    source: item.source || provider,
+    provider
   }));
 }
 
-function domainOf(url = "") {
-  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
-}
-
-function isNaverNews(url) {
-  const h = domainOf(url);
-  return h === "news.naver.com" || h.endsWith(".news.naver.com") || h === "n.news.naver.com";
-}
-
-function isNaverBlog(url) {
-  const h = domainOf(url);
-  return h === "blog.naver.com" || h.endsWith(".blog.naver.com") || h === "m.blog.naver.com";
-}
-
-function normalizeUrl(url = "") {
-  try {
-    const u = new URL(url);
-    ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "gclid", "ocid"].forEach(k => u.searchParams.delete(k));
-    u.hash = "";
-    return u.toString().replace(/\/$/, "");
-  } catch { return url; }
-}
-
-function mergeDeduped(items) {
-  const map = new Map();
-  for (const item of items) {
-    const key = normalizeUrl(item.url) || normalizeText(item.title);
-    if (!key) continue;
-    const old = map.get(key);
-    if (!old || item.rank > old.rank) map.set(key, item);
-  }
-  return [...map.values()];
-}
-
-function selectBalanced(items, max = 15) {
-  const buckets = new Map();
-  for (const item of items) {
-    const key = item.type;
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(item);
-  }
-  for (const arr of buckets.values()) arr.sort((a, b) => b.rank - a.rank);
-
-  const priority = ["naver-news", "news", "column", "academic"];
-  const output = [];
-  // 먼저 각 유형에서 최소 1개씩 가져와 한 제공처가 화면을 독점하지 못하게 합니다.
-  for (const type of priority) {
-    const item = buckets.get(type)?.shift();
-    if (item) output.push(item);
-    if (output.length >= max) return output;
-  }
-  const rest = [...buckets.values()].flat().sort((a, b) => b.rank - a.rank);
-  output.push(...rest.slice(0, max - output.length));
-  return output.sort((a, b) => b.rank - a.rank).slice(0, max);
-}
-
-function buildSourceResult(query, raw, type, label, maxAge, allowUndated = false) {
-  return raw
-    .filter(x => x.title && x.url)
-    .map(x => ({ ...x, type, source: x.source || label }))
-    .filter(x => {
-      const rel = relevance(query, x.title, x.description);
-      const age = ageDays(x.publishedAt);
-      const fresh = Number.isFinite(age) ? age <= maxAge : (allowUndated && rel >= 105);
-      const tokens = queryTokens(query);
-      const titleNorm = normalizeText(x.title);
-      const titleHit = tokens.some(t => titleNorm.includes(t));
-      const minRel = tokens.length <= 1 ? 36 : 44;
-      return rel >= minRel && fresh && (tokens.length <= 1 || titleHit);
-    })
-    .map(x => scoreItem(query, x));
-}
-
-async function searchMaterials(query) {
-  const q = clean(query).slice(0, 160);
+async function searchMaterials(query, type) {
+  const q = String(query || "").trim().slice(0, 200);
   if (q.length < 2) return json({ error: "검색어를 2자 이상 입력해 주세요." }, 400);
 
-  // 검색어 하나에 모든 결과를 억지로 섞지 않습니다.
-  // ① 최신 뉴스 ② 네이버 뉴스 ③ 네이버 블로그/칼럼 ④ 학술자료를 독립적으로 수집합니다.
-  const jobs = {
-    googleNews: googleNews(q, "when:30d"),
-    googleNaverNews: googleNews(q, "site:news.naver.com when:90d"),
-    googleNaverBlog: googleNews(q, "site:blog.naver.com when:180d"),
-    bingNews: bingNews(q, "freshness:Month"),
-    bingNaverNews: bingNews(q, "site:news.naver.com"),
-    bingNaverBlog: Promise.resolve([]),
-    openAlex: openAlex(q)
-  };
-  const entries = Object.entries(jobs);
-  const settled = await Promise.allSettled(entries.map(([, p]) => p));
-  const raw = Object.fromEntries(settled.map((result, i) => [entries[i][0], result]));
+  if (!["news", "photos", "academic"].includes(type)) {
+    return json({ error: "검색 유형은 news, photos, academic 중 하나여야 합니다." }, 400);
+  }
 
-  const providers = [];
-  const warnings = {};
-  const take = (name, label) => {
-    const r = raw[name];
-    if (r?.status === "fulfilled") { providers.push(label); return r.value; }
-    warnings[label] = r?.reason?.message || "연결 실패";
-    return [];
-  };
-
-  const googleItems = take("googleNews", "Google News RSS");
-  const googleNaverNewsItems = take("googleNaverNews", "Naver News via Google RSS");
-  const googleNaverBlogItems = take("googleNaverBlog", "Naver Blog via Google RSS");
-  const bingItems = take("bingNews", "Bing News RSS");
-  const bingNaverNewsItems = take("bingNaverNews", "Naver News via Bing RSS");
-  const bingNaverBlogItems = take("bingNaverBlog", "Naver Blog via Bing RSS");
-  const academicItems = take("openAlex", "OpenAlex");
-
+  let feedUrl = "";
+  let provider = "";
+  let raw = [];
   let results = [];
-  results.push(...buildSourceResult(q, toNewsItems(googleItems, "news", "NEWS"), "news", "NEWS", 30));
-  results.push(...buildSourceResult(q, toNewsItems(bingItems, "news", "NEWS"), "news", "NEWS", 30));
-  results.push(...buildSourceResult(q, toNewsItems(googleNaverNewsItems, "naver-news", "NAVER NEWS"), "naver-news", "NAVER NEWS", 90));
-  results.push(...buildSourceResult(q, toNewsItems(bingNaverNewsItems, "naver-news", "NAVER NEWS"), "naver-news", "NAVER NEWS", 90));
-  results.push(...buildSourceResult(q, toNewsItems(googleNaverBlogItems, "column", "NAVER BLOG · RSS"), "column", "NAVER BLOG · RSS", 180, true));
-  results.push(...buildSourceResult(q, toNewsItems(bingNaverBlogItems, "column", "NAVER BLOG · RSS"), "column", "NAVER BLOG · RSS", 180, true));
-  results.push(...buildSourceResult(q, academicItems, "academic", "OPENALEX", 365 * 5));
 
-  // 네이버 도메인 판별을 RSS 결과의 실제 링크 기준으로 다시 수행합니다.
-  results = results.map(item => {
-    if (isNaverNews(item.url) || isNaverNews(item.sourceUrl)) return { ...item, type: "naver-news", source: "NAVER NEWS · RSS" };
-    if (isNaverBlog(item.url) || isNaverBlog(item.sourceUrl)) return { ...item, type: "column", source: "NAVER BLOG · RSS" };
-    return item;
-  }).map(item => scoreItem(q, item));
-
-  // 같은 URL뿐 아니라 같은 제목도 중복 제거합니다.
-  const urlMap = new Map();
-  const titleMap = new Map();
-  for (const item of results) {
-    const u = normalizeUrl(item.url);
-    const t = normalizeText(item.title);
-    if (!u || !t) continue;
-    if (urlMap.has(u)) continue;
-    if (titleMap.has(t) && titleMap.get(t).rank >= item.rank) continue;
-    urlMap.set(u, item);
-    titleMap.set(t, item);
-  }
-  results = [...urlMap.values()];
-
-  // 검색어와 관계없는 결과가 화면을 채우는 것을 최우선으로 막습니다.
-  results = results.filter(x => { const tokens=queryTokens(q); const title=normalizeText(x.title); const minRel=tokens.length<=1?36:44; return x.relevance>=minRel && (tokens.length<=1 || tokens.some(t=>title.includes(t))); });
-  results.sort((a, b) => b.rank - a.rank);
-
-  let selected = selectBalanced(results, 15);
-
-  // 정말로 뉴스/학술자료가 하나도 없을 때만 Wikipedia를 보조자료로 사용합니다.
-  // 정상적인 검색에서는 Wikipedia가 다른 자료를 밀어내지 못합니다.
-  if (!selected.length) {
-    try {
-      const refs = await wikipedia(q);
-      const refItems = refs.map(x => scoreItem(q, x)).filter(x => x.relevance >= 55).slice(0, 3);
-      selected = refItems;
-      if (refItems.length) providers.push("Wikipedia fallback");
-    } catch (error) {
-      warnings.Wikipedia = error.message || "연결 실패";
-    }
-  }
-
-  // 이미지를 보조적으로 채웁니다. 이미지 실패는 검색 실패로 취급하지 않습니다.
   try {
-    const titles = [...new Set(selected.filter(x => !x.image).map(x => x.title))].slice(0, 10);
-    if (titles.length) {
-      const imageUrl = `https://ko.wikipedia.org/w/api.php?action=query&format=json&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=520&pilicense=free&titles=${encodeURIComponent(titles.join("|"))}`;
-      const imageData = await fetchJson(imageUrl, 1800);
-      const imageMap = new Map(Object.values(imageData.query?.pages || {})
-        .filter(page => page.title && page.thumbnail?.source)
-        .map(page => [normalizeText(page.title), page.thumbnail.source]));
-      selected = selected.map(item => ({ ...item, image: item.image || imageMap.get(normalizeText(item.title)) || "" }));
+    if (type === "news") {
+      provider = "Google News RSS";
+      feedUrl = makeGoogleNewsFeed(q);
+      raw = await fetchRss(feedUrl, "news");
+      results = decorateItems(raw, "news", provider);
+    } else if (type === "photos") {
+      provider = "Flickr Public Photos RSS";
+      feedUrl = makeFlickrFeed(q);
+      raw = await fetchRss(feedUrl, "photos");
+      const terms = queryTerms(q);
+      results = decorateItems(raw.filter(item => {
+        if (!item.image) return false;
+        const haystack = normalizeText(`${item.title} ${item.description}`);
+        return !terms.length || terms.some(term => haystack.includes(term));
+      }), "photos", provider);
+    } else {
+      const plan = academicFeedPlan(q);
+      provider = `arXiv RSS (${plan.categories.join(", ")})`;
+      feedUrl = plan.url;
+      raw = await fetchRss(feedUrl, "academic", 12000);
+      results = decorateItems(raw.filter(item => academicMatches(q, item, plan.terms)), "academic", provider);
     }
   } catch (error) {
-    warnings.Images = error.message || "이미지 조회 실패";
+    return json({
+      query: q,
+      type,
+      results: [],
+      total: 0,
+      provider,
+      feedUrl,
+      error: error instanceof Error ? error.message : "RSS 피드를 불러오지 못했습니다.",
+      notice: "RSS 피드 연결에 실패했습니다. 다른 검색 방식으로 자동 전환하지 않았습니다."
+    }, 502);
   }
 
-  // 최신성 검증이 가능한 결과만 '최신 자료'로 표시합니다.
-  const recentCount = selected.filter(x => Number.isFinite(ageDays(x.publishedAt)) && ageDays(x.publishedAt) <= 90).length;
-  const counts = selected.reduce((acc, x) => { acc[x.type] = (acc[x.type] || 0) + 1; return acc; }, {});
-
-  const finalResults = selected.slice(0, 15).map(({ rank, relevance: rel, openAlexScore, ...item }) => item);
-  const hasPrimary = finalResults.some(x => ["news", "naver-news", "column", "academic"].includes(x.type));
+  results = dedupe(results.map(item => scoreResult(q, item)))
+    .sort((a, b) => b.relevance - a.relevance)
+    .map(({ relevance, ...item }) => item);
 
   return json({
     query: q,
-    results: finalResults,
-    providers: [...new Set(providers)],
-    counts,
-    recentCount,
-    notice: hasPrimary
-      ? "관련도 높은 최신 자료를 우선 표시했습니다. 네이버 뉴스·블로그는 공개 RSS로 확인되는 자료만 포함됩니다."
-      : "관련도 높은 배경 자료를 찾았습니다. 최신 뉴스/학술자료가 확인되면 해당 자료를 우선 표시합니다.",
-    searchPolicy: {
-      newsDays: 30,
-      naverNewsDays: 90,
-      naverBlogDays: 180,
-      academicYears: 5,
-      wikipediaFallbackOnly: true
-    },
-    ...(Object.keys(warnings).length ? { providerWarnings: warnings } : {})
-  }, 200, { "Cache-Control": "public, max-age=60, stale-while-revalidate=120" });
+    type,
+    results,
+    total: results.length,
+    provider,
+    notice: results.length
+      ? `${provider}에서 RSS 피드만 수집했습니다. 다른 API나 웹페이지 검색으로 대체하지 않았습니다.`
+      : "해당 RSS 피드에서 검색어와 맞는 자료를 찾지 못했습니다. 다른 검색 방식으로 자동 전환하지 않았습니다.",
+    searchMode: "rss-only",
+    feedUrl
+  }, 200, { "Cache-Control": "public, max-age=90, stale-while-revalidate=180" });
 }
 
 export default {
@@ -471,21 +302,24 @@ export default {
       return json({
         ok: true,
         service: "study-hub-pro",
-        version: "5.0.0",
-        worker: "online",
-        time: new Date().toISOString(),
-        naverApiKeyRequired: false,
-        searchSources: ["Google News RSS", "Bing News RSS", "Naver publisher results via RSS index", "OpenAlex"],
-        wikipediaMode: "fallback-only"
+        version: "7.0.0-rss-only",
+        searchMode: "rss-only",
+        searchTypes: ["news", "photos", "academic"],
+        rssOnly: true,
+        feeds: {
+          news: "Google News RSS",
+          photos: "Flickr Public Photos RSS",
+          academic: "arXiv RSS category feeds"
+        }
       });
     }
 
     if (url.pathname === "/api/search") {
       if (request.method !== "GET") return json({ error: "GET 요청만 지원합니다." }, 405, { Allow: "GET" });
       try {
-        return await searchMaterials(url.searchParams.get("q") || "");
+        return await searchMaterials(url.searchParams.get("q") || "", url.searchParams.get("type") || "news");
       } catch (error) {
-        return json({ error: "검색 처리 중 서버 오류가 발생했어요.", detail: error instanceof Error ? error.message : "unknown" }, 500);
+        return json({ error: "RSS 검색 처리 중 서버 오류가 발생했습니다.", detail: error instanceof Error ? error.message : "unknown" }, 500);
       }
     }
 
