@@ -1,4 +1,4 @@
-const VERSION = "11.1.0-academic-rss-fix";
+const VERSION = "11.2.0-multisource-search";
 const MAX_QUERY_LENGTH = 200;
 const MAX_FEED_BYTES = 5 * 1024 * 1024;
 const RSS_CACHE_TTL_MS = 90 * 1000;
@@ -41,6 +41,9 @@ const NEWS_BACKUP_FEEDS = [
 
 const rssMemoryCache = new Map();
 const rssInFlight = new Map();
+const academicMemoryCache = new Map();
+const academicInFlight = new Map();
+const ACADEMIC_CACHE_TTL_MS = 3 * 60 * 1000;
 
 // Best-effort per-isolate guard. This is not a replacement for a Cloudflare
 // dashboard/WAF rate-limiting rule because Worker isolates are distributed.
@@ -408,8 +411,7 @@ async function fetchApprovedFeedUrl(url, kind, signal) {
   throw new RssFetchError("RSS 리디렉션 횟수가 허용 범위를 초과했습니다.", { failureKind: "unexpected_redirect" });
 }
 
-async function fetchRssUncached(url, kind, timeoutMs) {
-  const maxAttempts = 2;
+async function fetchRssUncached(url, kind, timeoutMs, maxAttempts = 2) {
   let lastFailure = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -504,7 +506,7 @@ async function fetchRssUncached(url, kind, timeoutMs) {
   throw lastFailure || new RssFetchError("RSS 피드를 불러오지 못했습니다.", { failureKind: "unknown" });
 }
 
-async function fetchRss(url, kind, timeoutMs = 11000) {
+async function fetchRss(url, kind, timeoutMs = 11000, maxAttempts = 2) {
   const now = Date.now();
   const cached = rssMemoryCache.get(url);
   if (cached && cached.expiresAt > now) return cached.items.map(item => ({ ...item }));
@@ -515,7 +517,7 @@ async function fetchRss(url, kind, timeoutMs = 11000) {
     return shared.map(item => ({ ...item }));
   }
 
-  const task = fetchRssUncached(url, kind, timeoutMs);
+  const task = fetchRssUncached(url, kind, timeoutMs, maxAttempts);
   rssInFlight.set(url, task);
   try {
     const items = await task;
@@ -540,8 +542,10 @@ function makeGoogleNewsFeed(query) {
 }
 
 async function fetchBackupNewsRss(query) {
+  // Fetch all publisher feeds concurrently. RSS feeds are cached independently,
+  // so repeated searches reuse the latest publisher snapshots.
   const settled = await Promise.allSettled(NEWS_BACKUP_FEEDS.map(async feed => {
-    const items = await fetchRss(feed.url, "news", 11000);
+    const items = await fetchRss(feed.url, "news", 5000, 1);
     return items.map(item => ({
       ...item,
       source: item.source || feed.name,
@@ -568,13 +572,19 @@ async function fetchBackupNewsRss(query) {
     }
   });
 
+  const terms = queryTerms(query);
+  // Publisher feeds are broad, recent feeds rather than query indexes. Keep
+  // results with at least one meaningful term; rank title hits above summaries.
   const matches = collected
-    .map(item => ({ item, match: queryMatch(query, item) }))
-    .filter(entry => entry.match.matches)
-    .sort((a, b) => {
-      const score = value => value.match.titleHits * 8 + value.match.bodyHits * 3 + value.match.coverage * 5 + (value.match.exactPhrase ? 10 : 0);
-      return score(b) - score(a);
+    .map(item => {
+      const title = normalizeText(item.title);
+      const body = normalizeText(item.description);
+      const titleHits = terms.filter(term => title.includes(term)).length;
+      const bodyHits = terms.filter(term => body.includes(term)).length;
+      return { item, score: titleHits * 10 + bodyHits * 2 };
     })
+    .filter(entry => !terms.length || entry.score > 0)
+    .sort((a, b) => b.score - a.score)
     .map(entry => entry.item);
 
   return {
@@ -673,6 +683,140 @@ function selectAcademicItems(query, items, plan) {
   return { items: [], mode: "none" };
 }
 
+const ACADEMIC_API_TIMEOUT_MS = 6500;
+const ACADEMIC_RESULT_LIMIT = 25;
+
+async function fetchJsonWithTimeout(url, timeoutMs = ACADEMIC_API_TIMEOUT_MS, headers = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { "Accept": "application/json", "User-Agent": "STUDY-HUB-PRO/11.2 (academic search)" , ...headers },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeAcademicRecord({ title, description = "", url, source, publishedAt = "", authors = "", doi = "", pdfUrl = "" }) {
+  const safeUrl = safeHttpUrl(url);
+  if (!title || !safeUrl) return null;
+  return {
+    title: textOnly(title),
+    description: textOnly(description).slice(0, 1800),
+    url: safeUrl,
+    source,
+    publishedAt: publishedAt ? (parseDate(publishedAt) || String(publishedAt)) : "",
+    author: Array.isArray(authors) ? authors.map(a => typeof a === "string" ? a : a?.name || "").filter(Boolean).slice(0, 8).join(", ") : String(authors || ""),
+    doi: String(doi || ""),
+    pdfUrl: safeHttpUrl(pdfUrl)
+  };
+}
+
+async function searchCrossref(query) {
+  const url = new URL("https://api.crossref.org/works");
+  url.searchParams.set("query", query);
+  url.searchParams.set("rows", "25");
+  url.searchParams.set("select", "title,author,abstract,DOI,URL,published,published-print,published-online,type,is-referenced-by-count");
+  const data = await fetchJsonWithTimeout(url.toString());
+  return (data?.message?.items || []).map(item => normalizeAcademicRecord({
+    title: Array.isArray(item.title) ? item.title[0] : item.title,
+    description: item.abstract || "",
+    url: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : ""),
+    source: "Crossref",
+    publishedAt: item.published?.['date-parts']?.[0]?.join("-") || item["published-online"]?.['date-parts']?.[0]?.join("-") || item["published-print"]?.['date-parts']?.[0]?.join("-"),
+    authors: item.author?.map(a => [a.given, a.family].filter(Boolean).join(" ")) || [],
+    doi: item.DOI
+  })).filter(Boolean);
+}
+
+async function searchSemanticScholar(query) {
+  const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
+  url.searchParams.set("query", query);
+  url.searchParams.set("limit", "25");
+  url.searchParams.set("fields", "title,abstract,url,year,authors,externalIds,openAccessPdf,publicationDate");
+  const data = await fetchJsonWithTimeout(url.toString());
+  return (data?.data || []).map(item => normalizeAcademicRecord({
+    title: item.title,
+    description: item.abstract || "",
+    url: item.url || (item.externalIds?.DOI ? `https://doi.org/${item.externalIds.DOI}` : item.externalIds?.ArXiv ? `https://arxiv.org/abs/${item.externalIds.ArXiv}` : ""),
+    source: "Semantic Scholar",
+    publishedAt: item.publicationDate || item.year,
+    authors: item.authors || [],
+    doi: item.externalIds?.DOI || "",
+    pdfUrl: item.openAccessPdf?.url || ""
+  })).filter(Boolean);
+}
+
+async function searchArxivApi(query) {
+  const url = new URL("https://export.arxiv.org/api/query");
+  url.searchParams.set("search_query", `all:${query.replace(/[():]/g, " ").slice(0, 120)}`);
+  url.searchParams.set("start", "0");
+  url.searchParams.set("max_results", "25");
+  url.searchParams.set("sortBy", "relevance");
+  url.searchParams.set("sortOrder", "descending");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ACADEMIC_API_TIMEOUT_MS);
+  try {
+    const response = await fetch(url.toString(), { headers: { "Accept": "application/atom+xml, application/xml;q=0.9" }, signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const xml = await readLimitedText(response, MAX_FEED_BYTES);
+    const entries = [...xml.matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi)].map(match => match[1]);
+    return entries.map(block => {
+      const title = textOnly(getTag(block, "title"));
+      const description = textOnly(getTag(block, "summary"));
+      const id = getTag(block, "id");
+      const publishedAt = getTag(block, "published");
+      const authors = [...block.matchAll(/<author\b[^>]*>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)].map(m => textOnly(m[1]));
+      return normalizeAcademicRecord({ title, description, url: id, source: "arXiv", publishedAt, authors });
+    }).filter(Boolean);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function searchAcademicMultiSource(query) {
+  const cacheKey = normalizeText(query);
+  const now = Date.now();
+  const cached = academicMemoryCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return structuredClone(cached.value);
+  if (academicInFlight.has(cacheKey)) return structuredClone(await academicInFlight.get(cacheKey));
+  const task = (async () => {
+  const providers = [
+    ["Crossref", () => searchCrossref(query)],
+    ["Semantic Scholar", () => searchSemanticScholar(query)],
+    ["arXiv", () => searchArxivApi(query)]
+  ];
+  const settled = await Promise.allSettled(providers.map(([, run]) => run()));
+  const records = [];
+  const providerStatus = [];
+  settled.forEach((result, index) => {
+    const name = providers[index][0];
+    if (result.status === "fulfilled") {
+      records.push(...result.value);
+      providerStatus.push({ name, ok: true, count: result.value.length });
+    } else {
+      providerStatus.push({ name, ok: false, count: 0, error: String(result.reason?.message || result.reason).slice(0, 120) });
+    }
+  });
+  const ranked = dedupe(records.map(item => ({ ...item, ...scoreResult(query, item) })))
+    .sort((a, b) => (b.relevance || 0) - (a.relevance || 0) || String(b.publishedAt).localeCompare(String(a.publishedAt)));
+  return { items: ranked.slice(0, ACADEMIC_RESULT_LIMIT), providerStatus, successfulProviders: providerStatus.filter(p => p.ok).length };
+  })();
+  academicInFlight.set(cacheKey, task);
+  try {
+    const value = await task;
+    academicMemoryCache.set(cacheKey, { value: structuredClone(value), expiresAt: Date.now() + ACADEMIC_CACHE_TTL_MS });
+    if (academicMemoryCache.size > 80) academicMemoryCache.delete(academicMemoryCache.keys().next().value);
+    return value;
+  } finally {
+    academicInFlight.delete(cacheKey);
+  }
+}
+
 function decorateItems(items, type, provider) {
   return items.map(item => ({
     ...item,
@@ -703,47 +847,42 @@ async function searchMaterials(query, type) {
 
   try {
     if (type === "news") {
-      provider = "Google News RSS";
+      provider = "Google News + 국내 언론사 RSS";
       feedUrl = makeGoogleNewsFeed(q);
-      try {
-        const primaryItems = await fetchRss(feedUrl, "news");
-        // Google News already applies the user's search query upstream.
-        // Do not re-filter its own results using the short RSS summary.
-        if (primaryItems.length) {
-          results = decorateItems(primaryItems, "news", "Google News RSS");
-        } else {
-          newsFallbackReason = "Google News RSS 피드가 비어 있어 보완 RSS를 조회했습니다.";
-        }
-      } catch (error) {
-        newsPrimaryError = error;
-        newsFallbackReason = error instanceof Error ? error.message : "Google News RSS 연결 실패";
+      // Query Google News and publisher feeds together. This avoids a slow
+      // serial fallback and increases coverage on every cache miss.
+      const [primaryResult, backupResult] = await Promise.allSettled([
+        fetchRss(feedUrl, "news", 6000, 1),
+        fetchBackupNewsRss(q)
+      ]);
+      let primaryItems = [];
+      if (primaryResult.status === "fulfilled") primaryItems = primaryResult.value;
+      else {
+        newsPrimaryError = primaryResult.reason;
+        newsFallbackReason = newsPrimaryError instanceof Error ? newsPrimaryError.message : "Google News RSS 연결 실패";
       }
-
-      if (!results.length) {
-        const backup = await fetchBackupNewsRss(q);
-        newsFallbackUsed = true;
-        newsFallbackFeedsUsed = backup.feedsUsed;
-
-        if (backup.items.length) {
-          provider = "Google News 우선 · 국내 언론사 RSS 보완";
-          results = decorateItems(backup.items, "news", "국내 언론사 RSS");
-        } else if (backup.successfulFeeds > 0) {
-          provider = "국내 언론사 RSS 보완";
-          results = [];
-        } else {
-          const primaryDetails = newsPrimaryError instanceof RssFetchError ? newsPrimaryError.details : {};
-          throw new RssFetchError(
-            "Google News RSS와 국내 언론사 보완 RSS에 모두 연결하지 못했습니다.",
-            {
-              failureKind: "news_all_feeds_failed",
-              upstreamStatus: primaryDetails.upstreamStatus || null,
-              primaryFailureKind: primaryDetails.failureKind || "no_matching_items",
-              primaryMessage: String(newsPrimaryError?.message || newsFallbackReason).slice(0, 200),
-              backupFailures: backup.failedFeeds,
-              retryable: Boolean(primaryDetails.retryable)
-            }
-          );
-        }
+      const backup = backupResult.status === "fulfilled" ? backupResult.value : { items: [], successfulFeeds: 0, failedFeeds: [], feedsUsed: [] };
+      newsFallbackUsed = primaryItems.length === 0 || backup.items.length > 0;
+      newsFallbackFeedsUsed = backup.feedsUsed;
+      if (backupResult.status === "rejected") {
+        newsFallbackReason = `${newsFallbackReason} 국내 언론사 RSS 일부 연결 실패`;
+      }
+      results = decorateItems(primaryItems, "news", "Google News RSS");
+      results.push(...decorateItems(backup.items, "news", "국내 언론사 RSS"));
+      results = dedupe(results);
+      provider = primaryItems.length && backup.items.length
+        ? "Google News + 국내 언론사 RSS"
+        : primaryItems.length ? "Google News RSS" : "국내 언론사 RSS";
+      if (!results.length && backup.successfulFeeds === 0 && primaryResult.status === "rejected") {
+        const primaryDetails = newsPrimaryError instanceof RssFetchError ? newsPrimaryError.details : {};
+        throw new RssFetchError("Google News와 국내 언론사 RSS에 모두 연결하지 못했습니다.", {
+          failureKind: "news_all_feeds_failed",
+          upstreamStatus: primaryDetails.upstreamStatus || null,
+          primaryFailureKind: primaryDetails.failureKind || "no_matching_items",
+          primaryMessage: String(newsPrimaryError?.message || newsFallbackReason).slice(0, 200),
+          backupFailures: backup.failedFeeds,
+          retryable: Boolean(primaryDetails.retryable)
+        });
       }
     } else if (type === "photos") {
       provider = "Flickr Public Photos RSS";
@@ -756,14 +895,17 @@ async function searchMaterials(query, type) {
         return !terms.length || terms.some(term => haystack.includes(term));
       }), "photos", provider);
     } else {
-      const plan = academicFeedPlan(q);
-      provider = `arXiv RSS (${plan.categories.join(", ")})`;
-      feedUrl = plan.url;
-      const raw = await fetchRss(feedUrl, "academic", 15000);
-      const selection = selectAcademicItems(q, raw, plan);
-      academicFallbackUsed = selection.mode === "topic_latest";
-      academicFeedEmpty = raw.length === 0;
-      results = decorateItems(selection.items, "academic", provider);
+      provider = "Crossref + Semantic Scholar + arXiv";
+      const multi = await searchAcademicMultiSource(q);
+      results = decorateItems(multi.items, "academic", provider);
+      academicFeedEmpty = multi.items.length === 0;
+      if (multi.successfulProviders === 0) {
+        throw new RssFetchError("학술 검색 제공처에 연결하지 못했습니다.", {
+          failureKind: "academic_all_sources_failed",
+          backupFailures: multi.providerStatus.map(p => ({ provider: p.name, message: p.error || "검색 실패" }))
+        });
+      }
+      newsFallbackFeedsUsed = multi.providerStatus.filter(p => p.ok).map(p => `${p.name} (${p.count})`);
     }
   } catch (error) {
     const details = error instanceof RssFetchError ? error.details : {};
@@ -796,17 +938,17 @@ async function searchMaterials(query, type) {
     .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
     .map(({ relevance, ...item }) => item);
 
-  const notice = type === "academic" && academicFallbackUsed
-    ? `검색어가 논문 제목·초록에 직접 나타나는 항목은 없지만, 선택한 arXiv 분야(${provider.replace(/^arXiv RSS \(|\)$/g, "")})의 최신 논문 ${results.length}개를 표시합니다. 분야별 RSS는 전체 논문 검색 색인이 아닙니다.`
-    : type === "academic" && academicFeedEmpty
-      ? "선택한 arXiv 분야의 RSS에 현재 신규 논문 항목이 없습니다. 분야별 RSS는 신규 제출 알림이므로 전체 논문 검색과 다르며, 다른 분야로 바꾸거나 다음 갱신 후 다시 시도해 주세요."
-      : type === "news" && newsFallbackUsed
+  const notice = type === "academic"
     ? results.length
-      ? `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 국내 언론사 공개 RSS에서 검색어 일치 기사 ${results.length}개를 찾았습니다. 모든 자료는 RSS에서만 수집했습니다.`
-      : `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 보완 RSS ${newsFallbackFeedsUsed.length}개는 연결됐지만 최근 피드에서 일치하는 기사를 찾지 못했습니다.`
-    : results.length
-      ? `${provider}에서 RSS 피드만 수집했습니다. 다른 API나 웹페이지 검색으로 대체하지 않았습니다.`
-      : "해당 RSS 피드에서 검색어와 맞는 자료를 찾지 못했습니다. 다른 검색 방식으로 자동 전환하지 않았습니다.";
+      ? `${provider}에서 논문 ${results.length}개를 통합했습니다. 중복 논문은 합쳤으며, 제공처별 연결 상태는 응답 정보에 포함됩니다.`
+      : "학술 검색 제공처에서 검색 결과를 찾지 못했습니다. 다른 검색어로 다시 시도해 주세요."
+    : type === "news" && newsFallbackUsed
+      ? `Google News와 국내 언론사 RSS를 병렬 조회해 기사 ${results.length}개를 모았습니다.`
+      : type === "news"
+        ? `Google News와 국내 언론사 RSS에서 기사 ${results.length}개를 모았습니다.`
+        : results.length
+          ? `${provider}에서 RSS 피드만 수집했습니다.`
+          : "해당 RSS 피드에서 검색어와 맞는 자료를 찾지 못했습니다.";
 
   return json({
     query: q,
@@ -815,13 +957,15 @@ async function searchMaterials(query, type) {
     total: results.length,
     provider,
     notice,
-    searchMode: "rss-only",
+    searchMode: type === "academic" ? "multi-source-api" : "parallel-rss",
     feedUrl,
     newsFallbackUsed,
     newsFallbackReason,
     newsFallbackFeedsUsed,
     academicFallbackUsed: type === "academic" && academicFallbackUsed,
-    academicFeedEmpty: type === "academic" && academicFeedEmpty
+    academicFeedEmpty: type === "academic" && academicFeedEmpty,
+    newsSourcesParallel: type === "news",
+    academicSources: type === "academic" ? newsFallbackFeedsUsed : []
   }, 200, { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" });
 }
 
@@ -835,24 +979,24 @@ export default {
         ok: true,
         service: "study-hub-pro",
         version: VERSION,
-        searchMode: "rss-only",
+        searchMode: "multi-source",
         searchTypes: ["news", "photos", "academic"],
         searchRateLimit: { requests: SEARCH_RATE_LIMIT, windowSeconds: 60, scope: "best-effort per Worker isolate" },
-        rssOnly: true,
+        rssOnly: false,
         feeds: {
           news: {
             primary: "Google News RSS",
             backup: NEWS_BACKUP_FEEDS.map(feed => ({ name: feed.name, url: feed.url })),
-            policy: "Google first; publisher RSS only when Google fails or has no matching items"
+            policy: "Google News and publisher RSS queried in parallel; results are merged and deduplicated"
           },
           photos: "Flickr Public Photos RSS",
-          academic: "arXiv RSS category feeds; exact text matches first, mapped-subject latest papers if none match"
+          academic: ["Crossref REST API", "Semantic Scholar Academic Graph API", "arXiv API"]
         },
         notes: [
-          "RSS 2.0/RSS 1.0 feeds only",
-          "No JSON search APIs or HTML scraping",
-          "Google News is the primary news RSS source; official publisher RSS feeds are a transparent fallback",
-          "arXiv RSS is a subject feed, not a full-text keyword search index; mapped subject papers are shown when no title/abstract keyword matches exist",
+          "News and photos use RSS; academic search uses public scholarly metadata APIs plus arXiv",
+          "No HTML scraping",
+          "Google News and publisher RSS are queried in parallel for broader news coverage",
+          "Academic results are merged from Crossref, Semantic Scholar, and arXiv; providers can independently fail or rate-limit requests",
           "Successful feed responses are cached briefly per Worker isolate",
           "Search requests have a best-effort per-isolate limit; configure a Cloudflare dashboard rate-limit rule for stronger edge-wide protection"
         ]

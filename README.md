@@ -1,73 +1,41 @@
-# STUDY HUB PRO V11.1
+# STUDY HUB PRO V11.2
 
-학생용 자료 탐색 및 과제 점검 웹앱입니다. 배포 대상은 **Cloudflare Workers + Static Assets**입니다. Cloudflare Pages용 프로젝트 구조로 바꾼 것은 아닙니다.
+학생용 자료 탐색 및 과제 점검 웹앱입니다. 배포 대상은 **Cloudflare Workers + Static Assets**입니다.
 
-## V11 변경 요약
+## V11.2 변경 사항
 
-- 데스크톱/모바일 화면을 재구성하고 모바일 입력 글자 크기, 터치 영역, 탐색 탭을 개선했습니다.
-- 화면의 기능 설명을 실제 코드와 일치시켰습니다. `AI 피드백`이 아니라 `규칙 기반 과제 점검`으로 명확히 표시합니다.
-- 과제 점검에서 근거·출처, 논리, 구조, 표현을 별도 항목으로 살펴봅니다. 근거가 없다고 사실이 틀렸다고 판정하거나 임의의 정확도 점수를 부여하지 않습니다.
-- 과제 본문은 브라우저 안에서만 분석합니다. 서버로 보내지 않으며 학습 기록에도 저장하지 않습니다.
-- 학습 기록에는 검색어 또는 과제 제목과 시각만 저장합니다. 브라우저 내보내기/삭제 기능을 추가했습니다.
-- `/api/health`로 검색 서버 상태와 버전을 실제 확인해 화면에 표시합니다.
-- 뉴스 보완 RSS의 키워드 일치 기준을 개선했습니다. 두 단어 검색은 두 단어가 모두 제목/요약에 들어간 결과를 우선 허용하고, 긴 질의는 핵심어 일치 비율을 적용합니다. 제목 일치도에 더 높은 가중치를 둡니다.
-- 검색 API에 IP별 분당 30회, Worker isolate 단위의 best-effort 제한을 추가했습니다.
-- 정적 파일 응답에 CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy 등 보안 헤더를 설정했습니다.
-- 학술자료 검색을 수정했습니다. arXiv는 검색어별 전체 색인이 아닌 주제별 신규 논문 RSS이므로, 제목·초록의 정확 일치 결과를 먼저 보여주고 일치 결과가 없으면 분류된 분야의 최신 논문을 `분야 최신`으로 구분해 표시합니다.
-- 보안/사이버보안 검색은 arXiv `cs.CR`(Cryptography and Security) 및 `cs.NI`(Networking and Internet Architecture) 피드를 사용합니다. 한국어 검색어에 대응하는 영어 학술 표현도 함께 점검합니다.
-- RSS 전용 구조, HTTPS 호스트 allowlist, 수동 리디렉션 검사, 응답 크기 제한, 짧은 캐시, bounded retry를 유지합니다.
-- 외부 AI API 키는 추가하지 않았습니다. 실제 생성형 AI 피드백 연결은 V11 범위에 포함하지 않았으며, 이를 연결했다고 표시하지 않습니다.
+- 뉴스 검색은 Google News와 연합뉴스·뉴시스·SBS·MBN 공개 RSS를 **동시에 조회**하고 결과를 합친 뒤 URL/제목 중복을 제거합니다. 이전의 Google 우선 → 실패 후 보완 RSS 순차 대기를 없애 검색 대기 시간을 줄였습니다.
+- 뉴스 RSS 요청은 5~6초 timeout, 재시도 없는 병렬 경로로 실행해 한 제공처 지연이 전체 검색을 오래 붙잡지 않게 했습니다. 정상 응답은 기존 RSS 캐시를 재사용합니다.
+- 국내 언론사 RSS는 최근 항목 중심의 넓은 피드이므로 검색어가 제목 또는 요약에 하나 이상 나타나는 항목을 관련도순으로 표시합니다. 이전의 다중 검색어 과도 필터링으로 인한 결과 누락을 줄였습니다.
+- 뉴스 결과 캐시와 RSS 요청 중복 합치기(in-flight deduplication)는 유지합니다.
+- 학술자료는 arXiv만 쓰지 않고 **Crossref REST API + Semantic Scholar Academic Graph API + arXiv API**를 병렬 검색합니다. 검색 결과는 Worker 메모리에서 3분 캐시하고 동일 검색의 동시 요청은 합칩니다.
+- 학술 결과는 제공처별 메타데이터를 공통 형식으로 변환하고 DOI/URL/제목 중복을 제거합니다. 공개 PDF URL이 제공되는 경우 결과에 PDF 링크를 표시합니다.
+- 학술 제공처 중 일부가 실패해도 나머지 제공처 결과를 보여줍니다. 모든 제공처가 실패한 경우에만 검색 실패로 표시합니다.
+- API 키는 필요하지 않으며, Semantic Scholar 등 외부 제공처는 요청 제한(429) 또는 일시 장애가 발생할 수 있습니다.
+- 사진 검색, 과제 점검, 학습 기록, 보안 헤더 및 기존 UI는 학술·뉴스 검색 수정 외에는 유지했습니다.
 
-## 자료 제공처 및 한계
+## 제공처와 한계
 
-| 검색 유형 | 사용 피드 | 한계 |
+| 검색 유형 | 제공처 | 한계 |
 |---|---|---|
-| 뉴스 | Google News RSS 우선, 실패/빈 피드 시 연합뉴스·뉴시스·SBS·MBN RSS 보완 | 보완 경로는 각 언론사 최근 RSS 항목만 대상으로 하며 전체 뉴스 인덱스가 아님 |
-| 사진 | Flickr 공개 사진 RSS | 검색 태그 기반이며 원본 페이지에서 사진 사용 조건 확인 필요 |
-| 학술자료 | arXiv 주제별 RSS | 검색어 제목·초록 일치 우선, 없으면 분류된 분야의 최신 논문 표시. Google Scholar 같은 전체 학술 데이터베이스 검색이 아님 |
-
-RSS 검색에는 JSON 검색 API, 일반 웹 검색, 원문 웹페이지 크롤링을 추가하지 않았습니다. RSS가 실패하면 해당 오류를 표시하고 다른 검색 방식으로 몰래 전환하지 않습니다.
-
-## 무료 사용량과 요청 제한
-
-- 외부 AI API 키나 유료 AI API 호출이 없습니다.
-- Cloudflare Workers 요금제의 요청/CPU 제한과 외부 RSS 제공처의 자체 제한은 별개입니다.
-- V11의 분당 30회 제한은 `CF-Connecting-IP`를 이용한 **Worker isolate별 임시 메모리 제한**입니다. 여러 isolate/colo에서 완전히 공유되지 않으므로 강력한 방어 수단으로 간주하면 안 됩니다.
-- 실서비스 보호가 필요하면 Cloudflare 대시보드의 Security/WAF Rate Limiting에서 `/api/search` 경로에 별도 edge rate-limit 규칙을 추가하세요.
-- 제한 카운터는 서버 메모리에만 잠시 존재하며 IP를 별도 로그/저장소에 기록하지 않습니다.
+| 뉴스 | Google News RSS + 연합뉴스·뉴시스·SBS·MBN RSS | 언론사 RSS는 최근 게시물 일부만 제공하며 모든 기사를 포함하지 않습니다. 검색어 일치 기준은 넓혀 결과량을 늘렸으므로 관련도가 다양한 결과가 섞일 수 있습니다. |
+| 사진 | Flickr 공개 사진 RSS | 태그 기반이며 사진 이용 조건은 원본 페이지에서 확인해야 합니다. |
+| 학술자료 | Crossref + Semantic Scholar + arXiv | 통합 메타데이터 검색이며 전체 논문 원문 전문 검색은 아닙니다. 초록·PDF가 없는 레코드도 있습니다. |
 
 ## 배포
 
-1. V11.1 배포 ZIP의 압축을 풉니다.
-2. 압축 안의 `package.json`, `wrangler.toml`, `src/`, `public/`, `README.md`, `.gitignore`를 GitHub 저장소 루트에 업로드합니다.
-3. Cloudflare에서 해당 Worker 프로젝트를 연결하고, 기존처럼 Workers + Static Assets 설정으로 배포합니다.
-4. CLI 배포가 필요하면 Node.js 20 이상에서 다음 명령을 실행합니다.
+1. 이 ZIP의 압축을 풀어 기존 GitHub 저장소 루트에 파일을 덮어씁니다.
+2. Cloudflare의 기존 Workers + Static Assets 배포 구조를 유지합니다.
+3. Node.js 20 이상에서 `npm install`, `npm run deploy`를 실행합니다.
+4. 배포 후 `/api/health`에서 `version: 11.2.0-multisource-search`를 확인합니다.
 
-```bash
-npm install
-npm run dev
-npm run deploy
-```
+## 테스트
 
-배포 후 아래 주소를 확인합니다.
+테스트 코드는 배포 ZIP에 넣지 않았습니다. 별도 테스트 ZIP의 `tests/smoke-v11.2.mjs`를 프로젝트 루트 기준으로 실행할 수 있습니다. 이 테스트는 모의 API/RSS 응답으로 Worker 경로와 결과 병합을 확인합니다. 실제 Cloudflare egress에서 모든 외부 제공처가 성공하는지는 배포 후 별도로 확인해야 합니다.
 
-```text
-https://YOUR-WORKER.workers.dev/api/health
-https://YOUR-WORKER.workers.dev/api/search?type=news&q=인공지능
-https://YOUR-WORKER.workers.dev/api/search?type=photos&q=robot
-https://YOUR-WORKER.workers.dev/api/search?type=academic&q=robotics
-```
+## 보안·운영 메모
 
-`/api/health`에서 `version: 11.1.0-academic-rss-fix`이 나오면 V11.1 Worker가 응답하고 있는 것입니다. 이 값만으로 세 RSS 제공처의 실시간 연결까지 성공한 것은 아닙니다.
-
-## 보안 메모
-
-- API 키와 `.dev.vars`, `.env` 파일을 포함하지 않습니다.
-- 사용자 입력으로 RSS URL을 받지 않습니다. 피드 호스트 allowlist 안의 고정 주소만 요청합니다.
-- HTML에는 외부 스크립트를 넣지 않습니다. CSP의 `script-src`는 `'self'`만 허용합니다.
-- 검색 결과 링크는 HTTP(S)만 표시하고 새 탭 링크에는 `noopener noreferrer`를 붙입니다.
-- 외부 폰트·외부 스크립트·분석 추적 코드를 사용하지 않습니다. 스타일과 스크립트는 같은 출처에서 불러오며, 이미지에 한해 HTTPS와 data URL을 허용합니다.
-
-## 검증 범위
-
-테스트 코드와 테스트 결과는 배포 ZIP에 넣지 않고 별도 `STUDY_HUB_PRO_V11_1_TESTS.zip`에 분리했습니다. 테스트는 실제 Worker 모듈을 모의 RSS 응답으로 실행합니다. 실제 Cloudflare 계정의 egress IP, WAF 설정, 외부 RSS 제공처 상태는 이 작업 환경에서 대신 검증할 수 없습니다. 배포 후 실제 도메인에서 뉴스·사진·학술자료를 각각 검색해 확인해야 합니다.
+- 사용자 입력으로 외부 URL을 지정하지 않습니다. 외부 검색 주소는 코드에 고정되어 있습니다.
+- 학술 API는 서버에서만 호출하며 브라우저에 API 키를 노출하지 않습니다.
+- RSS 피드는 짧게 캐시하며, 뉴스 RSS는 병렬 조회합니다.
+- 요청 제한은 기존 Worker isolate 단위 best-effort 방식입니다. 실제 운영 보호를 위해 Cloudflare 대시보드에서도 `/api/search`에 Rate Limiting 규칙을 추가하는 것을 권장합니다.

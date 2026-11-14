@@ -181,7 +181,7 @@ async function checkServiceStatus() {
     const response = await fetch('/api/health', { headers: { Accept: 'application/json' }, signal: controller.signal, cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const health = await response.json();
-    if (!health.ok || health.searchMode !== 'rss-only') throw new Error('Unexpected service response');
+    if (!health.ok || !['multi-source', 'rss-only'].includes(health.searchMode)) throw new Error('Unexpected service response');
     dot.className = 'status-dot online';
     label.textContent = `검색 서버 연결 · ${String(health.version || '버전 확인').split('-')[0]}`;
   } catch {
@@ -204,9 +204,9 @@ function setSearchType(type) {
   });
   $('#search-input').placeholder = SEARCH_HINTS[type];
   const descriptions = {
-    news: ['Google News RSS 우선 · 연결 실패 또는 빈 결과일 때 국내 언론사 RSS 보완', 'Google News 검색 결과는 뉴스 전체 색인, 보완 피드는 언론사별 최근 RSS 항목에 한정됩니다.'],
+    news: ['Google News + 국내 언론사 RSS 병렬 검색', '여러 공개 RSS를 동시에 조회하고 중복 기사를 합쳐 더 넓은 결과를 제공합니다.'],
     photos: ['Flickr 공개 사진 RSS', '사진 원본 페이지에서 작성자 표시와 이용 조건을 확인하세요.'],
-    academic: ['arXiv 주제별 RSS · 관련 분야 최신 논문 보완', '검색어가 논문 제목·초록에 없더라도, 일치 항목이 없으면 선택 분야의 최신 논문을 보여줍니다. 전체 학술 데이터베이스 검색은 아닙니다.']
+    academic: ['Crossref · Semantic Scholar · arXiv 통합 검색', '학술 메타데이터를 여러 공개 학술 데이터베이스에서 검색합니다. 제공처별 검색 범위와 초록·PDF 제공 여부는 다를 수 있습니다.']
   };
   $('#search-status').textContent = descriptions[type][0];
   $('#search-disclaimer').textContent = descriptions[type][1];
@@ -282,7 +282,8 @@ function renderSearchResults(items, requestedType, provider) {
     const description = String(item.description || '').slice(0, requestedType === 'photos' ? 200 : 420);
     const source = item.source || item.provider || provider || 'RSS';
     const academicModeTag = requestedType === 'academic' && item.academicMatchMode === 'topic_latest' ? '<span class="source-tag">분야 최신</span>' : '';
-    return `<article class="result-card${image ? ' has-image' : ''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(item.type || 'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(source)}</span>${academicModeTag}${date ? `<time class="muted-label">${escapeHtml(date)}</time>` : ''}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(description || '제공처에서 공개한 요약이 없습니다. 원문에서 내용을 확인하세요.')}</p>${credit}<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${requestedType === 'photos' ? '사진 원본과 이용 조건 확인 ↗' : '원문과 출처 확인 ↗'}</a></div></article>`;
+    const pdfLink = requestedType === 'academic' && safeWebUrl(item.pdfUrl) ? ` · <a href="${escapeHtml(safeWebUrl(item.pdfUrl))}" target="_blank" rel="noopener noreferrer">공개 PDF ↗</a>` : '';
+    return `<article class="result-card${image ? ' has-image' : ''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(item.type || 'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(source)}</span>${academicModeTag}${date ? `<time class="muted-label">${escapeHtml(date)}</time>` : ''}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(description || '제공처에서 공개한 요약이 없습니다. 원문에서 내용을 확인하세요.')}</p>${credit}<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${requestedType === 'photos' ? '사진 원본과 이용 조건 확인 ↗' : '원문과 출처 확인 ↗'}</a>${pdfLink}</div></article>`;
   }).join('');
 }
 
@@ -292,7 +293,7 @@ function renderSearchError(data, status) {
     ? `<p class="diagnostic">제공처 응답 요약: ${escapeHtml(data.upstreamMessage)}</p>` : '';
   const contentType = data?.contentType ? `<p class="diagnostic">응답 형식: ${escapeHtml(data.contentType)}</p>` : '';
   let feedLink = '';
-  const allowedHosts = new Set(['news.google.com', 'www.flickr.com', 'flickr.com', 'rss.arxiv.org']);
+  const allowedHosts = new Set(['news.google.com', 'www.flickr.com', 'flickr.com', 'rss.arxiv.org', 'export.arxiv.org', 'api.crossref.org', 'api.semanticscholar.org']);
   const original = safeWebUrl(data?.feedUrl);
   if (original) {
     const url = new URL(original);

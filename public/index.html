@@ -59,22 +59,22 @@
 
       <div class="section-heading"><div><h2>학습 도구</h2><p>필요한 작업을 골라 시작하세요.</p></div><span class="muted-label">YOUR TOOLKIT</span></div>
       <div class="tool-grid">
-        <button class="tool-card" type="button" data-go="search"><span class="tool-icon purple" aria-hidden="true">⌕</span><span class="tool-title">자료 탐색</span><span class="tool-desc">뉴스 · 사진 · 학술자료를 RSS로 검색</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
+        <button class="tool-card" type="button" data-go="search"><span class="tool-icon purple" aria-hidden="true">⌕</span><span class="tool-title">자료 탐색</span><span class="tool-desc">뉴스·사진 RSS와 여러 학술 데이터베이스 검색</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
         <button class="tool-card" type="button" data-go="feedback"><span class="tool-icon blue" aria-hidden="true">✳</span><span class="tool-title">과제 점검</span><span class="tool-desc">근거 · 논리 · 독자 관점에서 글 살펴보기</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
         <button class="tool-card" type="button" data-go="history"><span class="tool-icon mint" aria-hidden="true">◷</span><span class="tool-title">학습 기록</span><span class="tool-desc">이 브라우저의 최근 활동 다시 보기</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
       </div>
-      <div class="info-strip"><span aria-hidden="true">ⓘ</span><p><b>작동 방식 안내</b> 자료 탐색은 RSS 피드만 사용합니다. 과제 점검은 외부 AI가 아닌 브라우저 내 규칙 기반 도구이며, 작성한 글은 서버로 전송하지 않습니다.</p></div>
+      <div class="info-strip"><span aria-hidden="true">ⓘ</span><p><b>작동 방식 안내</b> 뉴스·사진은 공개 RSS, 학술자료는 여러 학술 메타데이터 API를 사용합니다. 과제 점검은 외부 AI가 아닌 브라우저 내 규칙 기반 도구이며, 작성한 글은 서버로 전송하지 않습니다.</p></div>
 
       <div class="section-heading source-heading"><div><h2>자료의 출처</h2><p>각 검색 유형은 서로 다른 공개 피드를 사용합니다.</p></div></div>
       <div class="source-grid">
-        <article class="source-card"><span class="source-icon">📰</span><div><b>뉴스</b><p>Google News RSS 우선 · 연결 실패/빈 결과 시 국내 언론사 RSS 보완</p></div></article>
+        <article class="source-card"><span class="source-icon">📰</span><div><b>뉴스</b><p>Google News + 국내 언론사 RSS 병렬 검색</p></div></article>
         <article class="source-card"><span class="source-icon">📷</span><div><b>사진</b><p>Flickr 공개 사진 RSS · 원본 페이지에서 이용 조건 확인</p></div></article>
-        <article class="source-card"><span class="source-icon">🎓</span><div><b>학술자료</b><p>arXiv 주제별 RSS · 검색어 일치 항목이 없으면 해당 분야 최신 논문 표시</p></div></article>
+        <article class="source-card"><span class="source-icon">🎓</span><div><b>학술자료</b><p>Crossref · Semantic Scholar · arXiv 통합 검색</p></div></article>
       </div>
     </section>
 
     <section class="view" id="view-search" aria-labelledby="search-title">
-      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1 id="search-title">자료 탐색</h1><p class="sub">뉴스·사진·학술자료를 공개 RSS 피드에서 찾습니다. 검색 방식은 임의로 바꾸지 않습니다.</p></div>
+      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1 id="search-title">자료 탐색</h1><p class="sub">뉴스·사진은 공개 RSS, 학술자료는 여러 공개 학술 데이터베이스에서 찾습니다.</p></div>
       <div class="search-type-tabs" role="tablist" aria-label="검색 자료 유형">
         <button type="button" class="search-type-tab active" data-search-type="news" role="tab" aria-selected="true">📰 뉴스</button>
         <button type="button" class="search-type-tab" data-search-type="photos" role="tab" aria-selected="false">📷 사진</button>
@@ -85,7 +85,7 @@
         <input id="search-input" name="q" type="search" minlength="2" maxlength="200" autocomplete="off" placeholder="예: 인공지능과 교육" required>
         <button class="primary-btn" type="submit">검색하기 <span aria-hidden="true">↗</span></button>
       </form>
-      <div class="search-meta"><span id="search-status" role="status" aria-live="polite">Google News RSS 우선 · 국내 언론사 RSS 보완</span><span id="search-policy">RSS 전용</span></div>
+      <div class="search-meta"><span id="search-status" role="status" aria-live="polite">Google News + 국내 언론사 RSS 병렬 검색</span><span id="search-policy">RSS + 학술 API</span></div>
       <div id="search-results" class="results" role="region" aria-label="검색 결과" aria-live="polite" aria-busy="false">
         <div class="empty-state"><div aria-hidden="true">⌕</div><h2>어떤 자료를 찾고 있나요?</h2><p>검색어를 입력하면 관련 자료와 원문 링크를 보여드려요.</p></div>
       </div>
@@ -125,8 +125,8 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="modal hidden" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
   <div class="modal-card"><button class="modal-close" id="modal-close" type="button" aria-label="닫기">×</button><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">STUDY HUB 사용 안내</h2>
-    <p><b>자료 탐색:</b> 뉴스는 Google News RSS를 먼저 요청하고, 오류 또는 빈 피드일 때 국내 언론사 RSS를 확인합니다. 사진은 Flickr 공개 RSS, 학술자료는 arXiv 주제별 RSS를 사용합니다. 웹페이지 크롤링이나 별도 검색 API로 바꾸지 않습니다.</p>
-    <p><b>학술자료 한계:</b> arXiv의 주제별 신규 논문 피드 기반이라 전체 학술 검색이 아닙니다. 검색어와 제목·초록이 일치하지 않으면 선택 분야의 최신 논문을 대신 표시합니다.</p>
+    <p><b>자료 탐색:</b> 뉴스는 Google News와 국내 언론사 공개 RSS를 병렬로 조회합니다. 사진은 Flickr 공개 RSS, 학술자료는 Crossref·Semantic Scholar·arXiv의 공개 학술 검색 API를 병렬로 조회합니다. 웹페이지를 무단 크롤링하지 않습니다.</p>
+    <p><b>학술자료 한계:</b> 학술자료는 여러 제공처의 메타데이터를 통합합니다. 제공처마다 색인 범위, 초록 및 공개 PDF 제공 여부가 다르며, 검색 결과가 모든 학술자료를 포괄한다고 보장하지 않습니다.</p>
     <p><b>과제 점검:</b> 외부 AI API를 연결하지 않은 규칙 기반 점검입니다. 출처 형식이나 논리 표현의 흔적을 찾아줄 뿐, 사실 여부나 과제 점수를 판정하지 않습니다.</p>
     <p><b>개인정보:</b> 과제 본문은 브라우저에서만 처리합니다. 검색어·과제 제목 기록은 현재 브라우저의 로컬 저장소에 남으며, 기록 메뉴에서 내보내거나 삭제할 수 있습니다.</p>
   </div>
