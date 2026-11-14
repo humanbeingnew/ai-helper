@@ -1,4 +1,4 @@
-const VERSION = "11.0.0-rss-quality-overhaul";
+const VERSION = "11.1.0-academic-rss-fix";
 const MAX_QUERY_LENGTH = 200;
 const MAX_FEED_BYTES = 5 * 1024 * 1024;
 const RSS_CACHE_TTL_MS = 90 * 1000;
@@ -601,7 +601,7 @@ const ACADEMIC_RULES = [
   { test: /자연어|언어모델|번역|챗봇|자연어처리|natural language|language model/i, categories: ["cs.CL", "cs.AI"], terms: ["natural language", "language model"] },
   { test: /컴퓨터.?비전|이미지.?인식|영상.?인식|computer vision|image recognition/i, categories: ["cs.CV", "cs.AI"], terms: ["computer vision", "image recognition"] },
   { test: /로봇|robot/i, categories: ["cs.RO", "cs.AI"], terms: ["robotics", "robot"] },
-  { test: /보안|암호|해킹|security|cryptography/i, categories: ["cs.CR", "cs.CY"], terms: ["security", "cryptography"] },
+  { test: /보안|암호|해킹|사이버.?보안|정보.?보안|security|cryptography|cybersecurity/i, categories: ["cs.CR", "cs.NI"], terms: ["cybersecurity", "computer security", "network security", "information security", "cryptography", "hacking"] },
   { test: /경제|금융|주식|econom|finance/i, categories: ["econ.GN", "q-fin.EC", "q-fin.ST"], terms: ["economics", "finance"] },
   { test: /생물|생명|의학|바이오|biology|medical/i, categories: ["q-bio"], terms: ["biology", "medical"] },
   { test: /물리|양자|physics|quantum/i, categories: ["physics", "quant-ph"], terms: ["physics", "quantum"] },
@@ -620,16 +620,57 @@ function academicFeedPlan(query) {
   return {
     url: `https://rss.arxiv.org/rss/${categories.join("+")}`,
     categories,
+    hasMappedTopic: matched.length > 0,
     terms: [...new Set([...queryTerms(query), ...queryTerms(expandedTerms.join(" "))])]
   };
 }
 
-function academicMatches(query, item, terms) {
-  const haystack = normalizeText(`${item.title} ${item.description}`);
+function academicMatchInfo(query, item, terms) {
+  const title = normalizeText(item.title);
+  const description = normalizeText(item.description);
+  const combined = `${title} ${description}`;
   const originalTerms = queryTerms(query);
   const allTerms = [...new Set([...terms, ...originalTerms])];
-  if (!allTerms.length) return true;
-  return allTerms.some(term => haystack.includes(term));
+  const titleHits = allTerms.filter(term => title.includes(term)).length;
+  const abstractHits = allTerms.filter(term => description.includes(term)).length;
+  const matched = titleHits + abstractHits > 0;
+  return {
+    matched,
+    relevance: titleHits * 10 + abstractHits * 3,
+    titleHits,
+    abstractHits
+  };
+}
+
+function selectAcademicItems(query, items, plan) {
+  const ranked = items.map(item => ({
+    ...item,
+    _academicMatch: academicMatchInfo(query, item, plan.terms)
+  }));
+  const exactMatches = ranked.filter(item => item._academicMatch.matched);
+
+  if (exactMatches.length) {
+    return {
+      items: exactMatches
+        .sort((a, b) => b._academicMatch.relevance - a._academicMatch.relevance)
+        .map(({ _academicMatch, ...item }) => ({ ...item, relevance: _academicMatch.relevance, academicMatchMode: "keyword" })),
+      mode: "keyword"
+    };
+  }
+
+  // A category RSS feed is a stream of recent submissions, not a query index.
+  // If a mapped subject feed has papers but none repeats the user's exact words,
+  // keep the papers and label them as latest papers in that subject area.
+  if (ranked.length && plan.hasMappedTopic) {
+    return {
+      items: ranked
+        .sort((a, b) => b._academicMatch.relevance - a._academicMatch.relevance)
+        .map(({ _academicMatch, ...item }) => ({ ...item, relevance: _academicMatch.relevance, academicMatchMode: "topic_latest" })),
+      mode: "topic_latest"
+    };
+  }
+
+  return { items: [], mode: "none" };
 }
 
 function decorateItems(items, type, provider) {
@@ -657,6 +698,8 @@ async function searchMaterials(query, type) {
   let newsFallbackReason = "";
   let newsFallbackFeedsUsed = [];
   let newsPrimaryError = null;
+  let academicFallbackUsed = false;
+  let academicFeedEmpty = false;
 
   try {
     if (type === "news") {
@@ -717,7 +760,10 @@ async function searchMaterials(query, type) {
       provider = `arXiv RSS (${plan.categories.join(", ")})`;
       feedUrl = plan.url;
       const raw = await fetchRss(feedUrl, "academic", 15000);
-      results = decorateItems(raw.filter(item => academicMatches(q, item, plan.terms)), "academic", provider);
+      const selection = selectAcademicItems(q, raw, plan);
+      academicFallbackUsed = selection.mode === "topic_latest";
+      academicFeedEmpty = raw.length === 0;
+      results = decorateItems(selection.items, "academic", provider);
     }
   } catch (error) {
     const details = error instanceof RssFetchError ? error.details : {};
@@ -746,11 +792,15 @@ async function searchMaterials(query, type) {
     }, 502);
   }
 
-  results = dedupe(results.map(item => scoreResult(q, item)))
-    .sort((a, b) => b.relevance - a.relevance)
+  results = dedupe(results.map(item => type === "academic" ? item : scoreResult(q, item)))
+    .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
     .map(({ relevance, ...item }) => item);
 
-  const notice = type === "news" && newsFallbackUsed
+  const notice = type === "academic" && academicFallbackUsed
+    ? `검색어가 논문 제목·초록에 직접 나타나는 항목은 없지만, 선택한 arXiv 분야(${provider.replace(/^arXiv RSS \(|\)$/g, "")})의 최신 논문 ${results.length}개를 표시합니다. 분야별 RSS는 전체 논문 검색 색인이 아닙니다.`
+    : type === "academic" && academicFeedEmpty
+      ? "선택한 arXiv 분야의 RSS에 현재 신규 논문 항목이 없습니다. 분야별 RSS는 신규 제출 알림이므로 전체 논문 검색과 다르며, 다른 분야로 바꾸거나 다음 갱신 후 다시 시도해 주세요."
+      : type === "news" && newsFallbackUsed
     ? results.length
       ? `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 국내 언론사 공개 RSS에서 검색어 일치 기사 ${results.length}개를 찾았습니다. 모든 자료는 RSS에서만 수집했습니다.`
       : `Google News RSS를 우선 요청했으나 ${newsFallbackReason} 보완 RSS ${newsFallbackFeedsUsed.length}개는 연결됐지만 최근 피드에서 일치하는 기사를 찾지 못했습니다.`
@@ -769,7 +819,9 @@ async function searchMaterials(query, type) {
     feedUrl,
     newsFallbackUsed,
     newsFallbackReason,
-    newsFallbackFeedsUsed
+    newsFallbackFeedsUsed,
+    academicFallbackUsed: type === "academic" && academicFallbackUsed,
+    academicFeedEmpty: type === "academic" && academicFeedEmpty
   }, 200, { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" });
 }
 
@@ -794,12 +846,13 @@ export default {
             policy: "Google first; publisher RSS only when Google fails or has no matching items"
           },
           photos: "Flickr Public Photos RSS",
-          academic: "arXiv RSS category feeds"
+          academic: "arXiv RSS category feeds; exact text matches first, mapped-subject latest papers if none match"
         },
         notes: [
           "RSS 2.0/RSS 1.0 feeds only",
           "No JSON search APIs or HTML scraping",
           "Google News is the primary news RSS source; official publisher RSS feeds are a transparent fallback",
+          "arXiv RSS is a subject feed, not a full-text keyword search index; mapped subject papers are shown when no title/abstract keyword matches exist",
           "Successful feed responses are cached briefly per Worker isolate",
           "Search requests have a best-effort per-isolate limit; configure a Cloudflare dashboard rate-limit rule for stronger edge-wide protection"
         ]

@@ -1,4 +1,4 @@
-# STUDY HUB PRO V11
+# STUDY HUB PRO V11.1
 
 학생용 자료 탐색 및 과제 점검 웹앱입니다. 배포 대상은 **Cloudflare Workers + Static Assets**입니다. Cloudflare Pages용 프로젝트 구조로 바꾼 것은 아닙니다.
 
@@ -13,6 +13,8 @@
 - 뉴스 보완 RSS의 키워드 일치 기준을 개선했습니다. 두 단어 검색은 두 단어가 모두 제목/요약에 들어간 결과를 우선 허용하고, 긴 질의는 핵심어 일치 비율을 적용합니다. 제목 일치도에 더 높은 가중치를 둡니다.
 - 검색 API에 IP별 분당 30회, Worker isolate 단위의 best-effort 제한을 추가했습니다.
 - 정적 파일 응답에 CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy 등 보안 헤더를 설정했습니다.
+- 학술자료 검색을 수정했습니다. arXiv는 검색어별 전체 색인이 아닌 주제별 신규 논문 RSS이므로, 제목·초록의 정확 일치 결과를 먼저 보여주고 일치 결과가 없으면 분류된 분야의 최신 논문을 `분야 최신`으로 구분해 표시합니다.
+- 보안/사이버보안 검색은 arXiv `cs.CR`(Cryptography and Security) 및 `cs.NI`(Networking and Internet Architecture) 피드를 사용합니다. 한국어 검색어에 대응하는 영어 학술 표현도 함께 점검합니다.
 - RSS 전용 구조, HTTPS 호스트 allowlist, 수동 리디렉션 검사, 응답 크기 제한, 짧은 캐시, bounded retry를 유지합니다.
 - 외부 AI API 키는 추가하지 않았습니다. 실제 생성형 AI 피드백 연결은 V11 범위에 포함하지 않았으며, 이를 연결했다고 표시하지 않습니다.
 
@@ -22,7 +24,7 @@
 |---|---|---|
 | 뉴스 | Google News RSS 우선, 실패/빈 피드 시 연합뉴스·뉴시스·SBS·MBN RSS 보완 | 보완 경로는 각 언론사 최근 RSS 항목만 대상으로 하며 전체 뉴스 인덱스가 아님 |
 | 사진 | Flickr 공개 사진 RSS | 검색 태그 기반이며 원본 페이지에서 사진 사용 조건 확인 필요 |
-| 학술자료 | arXiv 주제별 RSS | Google Scholar 같은 전체 학술 데이터베이스 검색이 아님 |
+| 학술자료 | arXiv 주제별 RSS | 검색어 제목·초록 일치 우선, 없으면 분류된 분야의 최신 논문 표시. Google Scholar 같은 전체 학술 데이터베이스 검색이 아님 |
 
 RSS 검색에는 JSON 검색 API, 일반 웹 검색, 원문 웹페이지 크롤링을 추가하지 않았습니다. RSS가 실패하면 해당 오류를 표시하고 다른 검색 방식으로 몰래 전환하지 않습니다.
 
@@ -36,7 +38,7 @@ RSS 검색에는 JSON 검색 API, 일반 웹 검색, 원문 웹페이지 크롤�
 
 ## 배포
 
-1. V11 배포 ZIP의 압축을 풉니다.
+1. V11.1 배포 ZIP의 압축을 풉니다.
 2. 압축 안의 `package.json`, `wrangler.toml`, `src/`, `public/`, `README.md`, `.gitignore`를 GitHub 저장소 루트에 업로드합니다.
 3. Cloudflare에서 해당 Worker 프로젝트를 연결하고, 기존처럼 Workers + Static Assets 설정으로 배포합니다.
 4. CLI 배포가 필요하면 Node.js 20 이상에서 다음 명령을 실행합니다.
@@ -56,7 +58,7 @@ https://YOUR-WORKER.workers.dev/api/search?type=photos&q=robot
 https://YOUR-WORKER.workers.dev/api/search?type=academic&q=robotics
 ```
 
-`/api/health`에서 `version: 11.0.0-rss-quality-overhaul`이 나오면 V11 Worker가 응답하고 있는 것입니다. 이 값만으로 세 RSS 제공처의 실시간 연결까지 성공한 것은 아닙니다.
+`/api/health`에서 `version: 11.1.0-academic-rss-fix`이 나오면 V11.1 Worker가 응답하고 있는 것입니다. 이 값만으로 세 RSS 제공처의 실시간 연결까지 성공한 것은 아닙니다.
 
 ## 보안 메모
 
@@ -68,4 +70,4 @@ https://YOUR-WORKER.workers.dev/api/search?type=academic&q=robotics
 
 ## 검증 범위
 
-테스트 코드와 테스트 결과는 배포 ZIP에 넣지 않고 별도 `STUDY_HUB_PRO_V11_TESTS.zip`에 분리했습니다. 테스트는 실제 Worker 모듈을 모의 RSS 응답으로 실행합니다. 실제 Cloudflare 계정의 egress IP, WAF 설정, 외부 RSS 제공처 상태는 이 작업 환경에서 대신 검증할 수 없습니다. 배포 후 실제 도메인에서 뉴스·사진·학술자료를 각각 검색해 확인해야 합니다.
+테스트 코드와 테스트 결과는 배포 ZIP에 넣지 않고 별도 `STUDY_HUB_PRO_V11_1_TESTS.zip`에 분리했습니다. 테스트는 실제 Worker 모듈을 모의 RSS 응답으로 실행합니다. 실제 Cloudflare 계정의 egress IP, WAF 설정, 외부 RSS 제공처 상태는 이 작업 환경에서 대신 검증할 수 없습니다. 배포 후 실제 도메인에서 뉴스·사진·학술자료를 각각 검색해 확인해야 합니다.

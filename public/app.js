@@ -206,7 +206,7 @@ function setSearchType(type) {
   const descriptions = {
     news: ['Google News RSS 우선 · 연결 실패 또는 빈 결과일 때 국내 언론사 RSS 보완', 'Google News 검색 결과는 뉴스 전체 색인, 보완 피드는 언론사별 최근 RSS 항목에 한정됩니다.'],
     photos: ['Flickr 공개 사진 RSS', '사진 원본 페이지에서 작성자 표시와 이용 조건을 확인하세요.'],
-    academic: ['arXiv 주제별 RSS', '학술자료 검색은 arXiv 주제 피드 기반이며 모든 학술 데이터베이스를 검색하지 않습니다.']
+    academic: ['arXiv 주제별 RSS · 관련 분야 최신 논문 보완', '검색어가 논문 제목·초록에 없더라도, 일치 항목이 없으면 선택 분야의 최신 논문을 보여줍니다. 전체 학술 데이터베이스 검색은 아닙니다.']
   };
   $('#search-status').textContent = descriptions[type][0];
   $('#search-disclaimer').textContent = descriptions[type][1];
@@ -281,7 +281,8 @@ function renderSearchResults(items, requestedType, provider) {
       : '';
     const description = String(item.description || '').slice(0, requestedType === 'photos' ? 200 : 420);
     const source = item.source || item.provider || provider || 'RSS';
-    return `<article class="result-card${image ? ' has-image' : ''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(item.type || 'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(source)}</span>${date ? `<time class="muted-label">${escapeHtml(date)}</time>` : ''}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(description || '제공처에서 공개한 요약이 없습니다. 원문에서 내용을 확인하세요.')}</p>${credit}<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${requestedType === 'photos' ? '사진 원본과 이용 조건 확인 ↗' : '원문과 출처 확인 ↗'}</a></div></article>`;
+    const academicModeTag = requestedType === 'academic' && item.academicMatchMode === 'topic_latest' ? '<span class="source-tag">분야 최신</span>' : '';
+    return `<article class="result-card${image ? ' has-image' : ''}">${image}<div class="result-content"><div class="result-top"><span class="type-badge type-${escapeHtml(item.type || 'other')}">${escapeHtml(category)}</span><span class="source-tag">${escapeHtml(source)}</span>${academicModeTag}${date ? `<time class="muted-label">${escapeHtml(date)}</time>` : ''}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(description || '제공처에서 공개한 요약이 없습니다. 원문에서 내용을 확인하세요.')}</p>${credit}<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${requestedType === 'photos' ? '사진 원본과 이용 조건 확인 ↗' : '원문과 출처 확인 ↗'}</a></div></article>`;
   }).join('');
 }
 
