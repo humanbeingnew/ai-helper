@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="뉴스·사진·학술자료를 탐색하고, 작성한 과제를 세 가지 관점에서 점검하는 학생용 학습 공간">
+  <meta name="color-scheme" content="light">
+  <title>STUDY HUB PRO · 학습 작업실</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="주 메뉴">
+    <a class="brand" href="#home" aria-label="STUDY HUB PRO 홈">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <span class="brand-copy">STUDY HUB<small>PRO · LEARNING SPACE</small></span>
+    </a>
+    <div class="side-label">WORKSPACE</div>
+    <nav class="nav">
+      <button class="nav-item active" type="button" data-view="home" aria-current="page"><span aria-hidden="true">⌂</span> 대시보드</button>
+      <button class="nav-item" type="button" data-view="search"><span aria-hidden="true">⌕</span> 자료 탐색</button>
+      <button class="nav-item" type="button" data-view="feedback"><span aria-hidden="true">✳</span> 과제 점검</button>
+      <button class="nav-item" type="button" data-view="history"><span aria-hidden="true">◷</span> 학습 기록</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="free-card"><span class="live-dot" aria-hidden="true"></span><b>무료 · API 키 불필요</b><p>자료 검색은 RSS를 사용하고<br>글 점검은 브라우저에서 실행해요.</p></div>
+      <div class="profile"><div class="avatar" aria-hidden="true">S</div><div><b>나의 학습 공간</b><small>이 브라우저에 기록 저장</small></div></div>
+    </div>
+  </aside>
+
+  <main class="main" id="main-content">
+    <header class="topbar">
+      <div class="crumb">STUDY HUB <span>/</span> <b id="crumb-current">대시보드</b></div>
+      <div class="top-actions">
+        <span class="status" id="service-status" role="status"><i class="status-dot checking" aria-hidden="true"></i><span>검색 서버 확인 중</span></span>
+        <button class="icon-btn" id="help-btn" type="button" aria-label="사용 안내 열기">?</button>
+      </div>
+    </header>
+
+    <section class="view active" id="view-home" aria-labelledby="home-title">
+      <div class="welcome-row">
+        <div><div class="eyebrow">YOUR LEARNING WORKSPACE</div><h1 id="home-title">오늘은 무엇을 탐구할까요?</h1><p class="sub">자료를 찾고, 생각을 검토하고, 결과물을 다듬어 보세요.</p></div>
+        <div class="date-chip" id="today-date"></div>
+      </div>
+
+      <div class="hero-card">
+        <div class="hero-copy">
+          <div class="hero-tag">✦ FIND · THINK · IMPROVE</div>
+          <h2>질문에서 시작해<br><em>근거 있는 결과물</em>로.</h2>
+          <p>자료의 출처를 확인하고, 세 가지 검토 관점으로 글의 빈틈을 찾아보세요.</p>
+          <button class="primary-btn" type="button" data-go="search">자료 탐색 시작하기 <span aria-hidden="true">↗</span></button>
+        </div>
+        <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-core">✳</div><div class="float-card card-a">01 · EXPLORE</div><div class="float-card card-b">02 · REVIEW</div><div class="float-card card-c">03 · REFINE</div></div>
+      </div>
+
+      <div class="section-heading"><div><h2>학습 도구</h2><p>필요한 작업을 골라 시작하세요.</p></div><span class="muted-label">YOUR TOOLKIT</span></div>
+      <div class="tool-grid">
+        <button class="tool-card" type="button" data-go="search"><span class="tool-icon purple" aria-hidden="true">⌕</span><span class="tool-title">자료 탐색</span><span class="tool-desc">뉴스 · 사진 · 학술자료를 RSS로 검색</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
+        <button class="tool-card" type="button" data-go="feedback"><span class="tool-icon blue" aria-hidden="true">✳</span><span class="tool-title">과제 점검</span><span class="tool-desc">근거 · 논리 · 독자 관점에서 글 살펴보기</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
+        <button class="tool-card" type="button" data-go="history"><span class="tool-icon mint" aria-hidden="true">◷</span><span class="tool-title">학습 기록</span><span class="tool-desc">이 브라우저의 최근 활동 다시 보기</span><span class="tool-arrow" aria-hidden="true">↗</span></button>
+      </div>
+      <div class="info-strip"><span aria-hidden="true">ⓘ</span><p><b>작동 방식 안내</b> 자료 탐색은 RSS 피드만 사용합니다. 과제 점검은 외부 AI가 아닌 브라우저 내 규칙 기반 도구이며, 작성한 글은 서버로 전송하지 않습니다.</p></div>
+
+      <div class="section-heading source-heading"><div><h2>자료의 출처</h2><p>각 검색 유형은 서로 다른 공개 피드를 사용합니다.</p></div></div>
+      <div class="source-grid">
+        <article class="source-card"><span class="source-icon">📰</span><div><b>뉴스</b><p>Google News RSS 우선 · 연결 실패/빈 결과 시 국내 언론사 RSS 보완</p></div></article>
+        <article class="source-card"><span class="source-icon">📷</span><div><b>사진</b><p>Flickr 공개 사진 RSS · 원본 페이지에서 이용 조건 확인</p></div></article>
+        <article class="source-card"><span class="source-icon">🎓</span><div><b>학술자료</b><p>arXiv 주제별 RSS · 전체 학술 논문을 망라하는 검색은 아님</p></div></article>
+      </div>
+    </section>
+
+    <section class="view" id="view-search" aria-labelledby="search-title">
+      <div class="page-heading"><div class="eyebrow">DISCOVER KNOWLEDGE</div><h1 id="search-title">자료 탐색</h1><p class="sub">뉴스·사진·학술자료를 공개 RSS 피드에서 찾습니다. 검색 방식은 임의로 바꾸지 않습니다.</p></div>
+      <div class="search-type-tabs" role="tablist" aria-label="검색 자료 유형">
+        <button type="button" class="search-type-tab active" data-search-type="news" role="tab" aria-selected="true">📰 뉴스</button>
+        <button type="button" class="search-type-tab" data-search-type="photos" role="tab" aria-selected="false">📷 사진</button>
+        <button type="button" class="search-type-tab" data-search-type="academic" role="tab" aria-selected="false">🎓 학술자료</button>
+      </div>
+      <form id="search-form" class="search-box">
+        <label class="sr-only" for="search-input">검색어</label><span aria-hidden="true">⌕</span>
+        <input id="search-input" name="q" type="search" minlength="2" maxlength="200" autocomplete="off" placeholder="예: 인공지능과 교육" required>
+        <button class="primary-btn" type="submit">검색하기 <span aria-hidden="true">↗</span></button>
+      </form>
+      <div class="search-meta"><span id="search-status" role="status" aria-live="polite">Google News RSS 우선 · 국내 언론사 RSS 보완</span><span id="search-policy">RSS 전용</span></div>
+      <div id="search-results" class="results" role="region" aria-label="검색 결과" aria-live="polite" aria-busy="false">
+        <div class="empty-state"><div aria-hidden="true">⌕</div><h2>어떤 자료를 찾고 있나요?</h2><p>검색어를 입력하면 관련 자료와 원문 링크를 보여드려요.</p></div>
+      </div>
+      <p class="source-disclaimer" id="search-disclaimer">검색 결과는 각 RSS 제공처가 공개한 항목 범위에 한정됩니다. 원문 게시일·내용·이용 조건은 제공처에서 다시 확인하세요.</p>
+    </section>
+
+    <section class="view" id="view-feedback" aria-labelledby="feedback-title">
+      <div class="page-heading"><div class="eyebrow">REVIEW · CHALLENGE · REFINE</div><h1 id="feedback-title">과제 점검</h1><p class="sub">작성한 글을 세 가지 검토 관점으로 살펴보고, 다음 수정 방향을 찾아요.</p></div>
+      <div class="review-banner"><b>자동 점검 도구</b><span>AI 모델이 글의 사실 여부를 판정하는 기능은 아닙니다. 문장 패턴과 글의 구조를 살펴보는 참고용 점검입니다.</span></div>
+      <div class="feedback-layout">
+        <form id="feedback-form" class="panel feedback-form">
+          <label for="task-type">과제 유형<select id="task-type" name="type"><option>설명문 / 보고서</option><option>주장하는 글</option><option>탐구 활동</option><option>발표 대본</option><option>일반 글쓰기</option></select></label>
+          <label for="task-topic">과제 주제 <span class="optional">선택</span><input id="task-topic" name="topic" maxlength="120" placeholder="예: 인공지능이 교육에 미치는 영향"></label>
+          <label for="task-content">내가 작성한 내용<textarea id="task-content" name="content" rows="12" minlength="30" maxlength="30000" placeholder="작성한 글이나 과제 내용을 붙여 넣으세요.&#10;&#10;내용·근거, 논리 흐름, 읽는 사람의 관점에서 점검합니다." required></textarea></label>
+          <div class="form-foot"><span id="char-count">0 / 30,000자</span><button class="primary-btn" type="submit">과제 점검하기 <span aria-hidden="true">✳</span></button></div>
+        </form>
+        <aside class="panel feedback-side" aria-label="검토 관점">
+          <div class="side-icon" aria-hidden="true">✳</div><h2>세 가지 검토 관점</h2>
+          <div class="review-point"><b><span>01</span> 근거를 따지는 검토자</b><p>주장에 사례와 자료가 붙어 있는지, 출처가 드러나는지 질문합니다.</p></div>
+          <div class="review-point"><b><span>02</span> 논리를 따지는 검토자</b><p>이유와 결론이 연결되는지, 반대 관점이 빠지지 않았는지 살펴봅니다.</p></div>
+          <div class="review-point"><b><span>03</span> 독자의 관점</b><p>주제가 분명한지, 문단과 표현이 이해하기 쉬운지 확인합니다.</p></div>
+          <div class="privacy-note">🔒 입력한 글은 브라우저 안에서만 분석합니다. 본문은 서버로 보내거나 학습 기록에 저장하지 않습니다. 기록에는 과제 주제와 점검 시각만 남습니다.</div>
+        </aside>
+      </div>
+      <section id="feedback-result" class="feedback-result hidden" aria-live="polite" aria-label="과제 점검 결과"></section>
+    </section>
+
+    <section class="view" id="view-history" aria-labelledby="history-title">
+      <div class="page-heading"><div class="eyebrow">YOUR PROGRESS</div><h1 id="history-title">학습 기록</h1><p class="sub">최근 검색어와 과제 점검 제목만 이 브라우저에 저장됩니다.</p></div>
+      <div class="history-head"><h2>최근 활동</h2><div class="history-actions"><button class="text-btn" id="export-history" type="button">기록 내보내기</button><button class="text-btn danger-text" id="clear-history" type="button">기록 지우기</button></div></div>
+      <div id="history-list" class="history-list"></div>
+    </section>
+
+    <footer>STUDY HUB PRO <span>·</span> Learn with curiosity. <span class="footer-version">V11</span></footer>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="modal hidden" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="modal-card"><button class="modal-close" id="modal-close" type="button" aria-label="닫기">×</button><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">STUDY HUB 사용 안내</h2>
+    <p><b>자료 탐색:</b> 뉴스는 Google News RSS를 먼저 요청하고, 오류 또는 빈 피드일 때 국내 언론사 RSS를 확인합니다. 사진은 Flickr 공개 RSS, 학술자료는 arXiv 주제별 RSS를 사용합니다. 웹페이지 크롤링이나 별도 검색 API로 바꾸지 않습니다.</p>
+    <p><b>학술자료 한계:</b> arXiv의 주제별 피드 기반이라 Google Scholar와 같은 전체 학술 검색이 아닙니다. 검색어와 주제별 피드가 맞지 않으면 결과가 적거나 없을 수 있습니다.</p>
+    <p><b>과제 점검:</b> 외부 AI API를 연결하지 않은 규칙 기반 점검입니다. 출처 형식이나 논리 표현의 흔적을 찾아줄 뿐, 사실 여부나 과제 점수를 판정하지 않습니다.</p>
+    <p><b>개인정보:</b> 과제 본문은 브라우저에서만 처리합니다. 검색어·과제 제목 기록은 현재 브라우저의 로컬 저장소에 남으며, 기록 메뉴에서 내보내거나 삭제할 수 있습니다.</p>
+  </div>
+</div>
+</body>
+</html>
